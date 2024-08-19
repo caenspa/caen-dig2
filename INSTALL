@@ -1,0 +1,54 @@
+-----------------------------------------------------------------------------
+
+                    --- CAEN SpA - Software Division ---
+
+-----------------------------------------------------------------------------
+
+    CAEN Dig2
+
+    Install procedure on Linux.
+
+-----------------------------------------------------------------------------
+
+
+Prerequisites
+-------------
+
+- A compiler supporting C++14, C++17 or C++20.
+  The following compiler versions have been tested on x86_64:
+  - GCC >= 5 (up to version 14)
+  - clang >= 3.8 (up to version 18*)
+- CAEN FELib >= 1.3.0
+- Boost C++ libraries (headers only, see build instructions).
+  The following Boost versions have been tested on x86_64:
+  - 1.67, 1.74, 1.83
+
+*) versions >= 16 require Boost >= 1.81
+
+
+Install
+-------
+
+In the extracted folder run
+
+    $ ./configure --disable-assert
+    $ make
+    $ sudo make install
+    $ sudo ldconfig
+
+
+Boost C++ libraries
+-------------------
+
+The most recent distributions provides Boost >= 1.67.0 with their package managers.
+If your Linux distribution provides an older version of Boost libraries, just download
+the sources of Boost 1.67.0 from https://www.boost.org/users/history/version_1_67_0.html,
+extract them in any folder, and run configure using the `--with-boost` flag.
+
+There is no need to compile Boost, as Boost shared libraries are not required at runtime.
+
+For example if you have extracted it in `/opt/boost_1_67_0`, execute:
+
+    $ ./configure --disable-assert --with-boost="/opt/boost_1_67_0"
+
+Then, just make as usual.
