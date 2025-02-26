@@ -36,11 +36,11 @@
 
 #include "endpoints/hw_endpoint.hpp"
 
+#include <string_view>
+
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "client.hpp"
 
-using namespace caen::literals;
 using namespace std::literals;
 
 namespace caen {

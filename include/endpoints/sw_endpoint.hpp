@@ -41,7 +41,6 @@
 #include <memory>
 
 #include "cpp-utility/bit.hpp"
-#include "cpp-utility/byte.hpp"
 #include "cpp-utility/integer.hpp"
 #include "endpoints/endpoint.hpp"
 
@@ -57,25 +56,25 @@ struct sw_endpoint : public endpoint {
 	~sw_endpoint();
 
 	virtual void resize() = 0;
-	virtual void decode(const caen::byte* p, std::size_t size) = 0;
+	virtual void decode(const std::byte* p, std::size_t size) = 0;
 	virtual void stop() = 0;
 
 protected:
 	// common stuff used to decode
 	using word_t = std::uint64_t;
 	using half_word_t = std::uint32_t;
-	static constexpr std::size_t word_size{sizeof(word_t)}; // in bytes
-	static constexpr std::size_t half_word_size{sizeof(half_word_t)}; // in bytes
-	static constexpr std::size_t word_bit_size{caen::bit::bit_size<word_t>::value}; // in bit
-	static constexpr std::size_t half_word_bit_size{caen::bit::bit_size<half_word_t>::value}; // in bit
-	static constexpr unsigned int sampling_period_log2{3}; // ns
-	static constexpr unsigned int sampling_period{1U << sampling_period_log2}; // ns
+	static inline constexpr std::size_t word_size{sizeof(word_t)}; // in bytes
+	static inline constexpr std::size_t half_word_size{sizeof(half_word_t)}; // in bytes
+	static inline constexpr std::size_t word_bit_size{caen::bit::bit_size<word_t>::value}; // in bit
+	static inline constexpr std::size_t half_word_bit_size{caen::bit::bit_size<half_word_t>::value}; // in bit
+	static inline constexpr unsigned int sampling_period_log2{3}; // ns
+	static inline constexpr unsigned int sampling_period{1U << sampling_period_log2}; // ns
 
 	struct evt_header {
 		struct s {
-			static constexpr std::size_t format{4};
-			static constexpr std::size_t implementation_defined{28};
-			static constexpr std::size_t n_words{32};
+			static inline constexpr std::size_t format{4};
+			static inline constexpr std::size_t implementation_defined{28};
+			static inline constexpr std::size_t n_words{32};
 			static_assert(format + implementation_defined + n_words == word_bit_size, "invalid sizes");
 		};
 		enum struct format : caen::uint_t<s::format>::fast {

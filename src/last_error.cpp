@@ -37,6 +37,7 @@
 #include "last_error.hpp"
 
 #include <exception>
+#include <string_view>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -47,10 +48,9 @@
 
 #include <CAEN_FELib.h>
 
-#include "cpp-utility/string_view.hpp"
 #include "lib_error.hpp"
 
-using namespace caen::literals;
+using namespace std::literals;
 
 namespace caen {
 
@@ -95,7 +95,7 @@ void store_and_log(FuncT&& func, TypeT&& type, const std::exception& ex) noexcep
 
 } // unnamed namespace
 
-int _handle_exception(caen::string_view func) noexcept try {
+int _handle_exception(std::string_view func) noexcept try {
 	// this throw usage is allowed when an exception is presently being handled, it calls std::terminate if used otherwise
 	throw;
 }
@@ -108,51 +108,51 @@ catch (const ex::stop&) {
 	return ::CAEN_FELib_Stop;
 }
 catch (const ex::invalid_argument& ex) {
-	store_and_log(func, "invalid argument"_sv, ex);
+	store_and_log(func, "invalid argument"sv, ex);
 	return ::CAEN_FELib_InvalidParam;
 }
 catch (const ex::invalid_handle& ex) {
-	store_and_log(func, "invalid handle"_sv, ex);
+	store_and_log(func, "invalid handle"sv, ex);
 	return ::CAEN_FELib_InvalidHandle;
 }
 catch (const ex::command_error& ex) {
-	store_and_log(func, "command error"_sv, ex);
+	store_and_log(func, "command error"sv, ex);
 	return ::CAEN_FELib_CommandError;
 }
 catch (const ex::communication_error& ex) {
-	store_and_log(func, "communication error"_sv, ex);
+	store_and_log(func, "communication error"sv, ex);
 	return ::CAEN_FELib_CommunicationError;
 }
 catch (const ex::not_yet_implemented& ex) {
-	store_and_log(func, "not yet implemented"_sv, ex);
+	store_and_log(func, "not yet implemented"sv, ex);
 	return ::CAEN_FELib_NotImplemented;
 }
 catch (const ex::device_not_found& ex) {
-	store_and_log(func, "device not found"_sv, ex);
+	store_and_log(func, "device not found"sv, ex);
 	return ::CAEN_FELib_DeviceNotFound;
 }
 catch (const ex::too_many_devices& ex) {
-	store_and_log(func, "too many devices"_sv, ex);
+	store_and_log(func, "too many devices"sv, ex);
 	return ::CAEN_FELib_MaxDevicesError;
 }
 catch (const ex::bad_library_version& ex) {
-	store_and_log(func, "bad library error"_sv, ex);
+	store_and_log(func, "bad library error"sv, ex);
 	return ::CAEN_FELib_BadLibraryVersion;
 }
 catch (const ex::not_enabled& ex) {
-	store_and_log(func, "endpoint not enabled"_sv, ex);
+	store_and_log(func, "endpoint not enabled"sv, ex);
 	return ::CAEN_FELib_Disabled;
 }
 catch (const ex::runtime_error& ex) {
-	store_and_log(func, "generic runtime error"_sv, ex);
+	store_and_log(func, "generic runtime error"sv, ex);
 	return ::CAEN_FELib_InternalError;
 }
 catch (const std::exception& ex) {
-	store_and_log(func, "generic error"_sv, ex);
+	store_and_log(func, "generic error"sv, ex);
 	return ::CAEN_FELib_GenericError;
 }
 catch (...) {
-	store_and_log(func, "unknown exception type"_sv);
+	store_and_log(func, "unknown exception type"sv);
 	return ::CAEN_FELib_GenericError;
 }
 

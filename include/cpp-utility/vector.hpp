@@ -42,6 +42,7 @@
 #include <vector>
 
 #include <boost/config.hpp>
+#include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/algorithm/fill.hpp>
 #include <boost/version.hpp>
 
@@ -184,6 +185,47 @@ void resize(vector<T, Allocator>& v, typename vector<T, Allocator>::size_type ne
 	if (BOOST_UNLIKELY(v.capacity() < new_size))
 		SPDLOG_DEBUG("need to reallocate memory (current capacity: {}, needed: {})", v.capacity(), new_size);
 	v.resize(new_size);
+}
+
+/**
+ * @brief Check if cast from size to container size type is narrowing and, if safe, resize.
+ *
+ * The problem arises since expected size could be provided as std::uint64_t in the buffer
+ * header, while container sizes are expressed in std::size_t that depends on the system
+ * architecture, and could be narrower than std::uint64_t.
+ * If a 64-bit size is larger than std::numeric_limits<std::size_t>::max(), than
+ * a cast to std::size_t would be performed with a narrowing conversion, i.e. with a bit
+ * truncation of some most significant non-zero bits.
+ *
+ * This is extremely unlikely, since buffers are allocated at arm_acquisition() at the
+ * maximum data size that depends on the current configuration of the board. In case of too
+ * large values, there should be errors in resize(), invoked by arm_acquisition(). This
+ * failure would happen only if max data size related parameters are changed are after
+ * disarm, but with data still to be read from the FPGA, and the new size become too large
+ * to be stored in a std::size_t.
+ *
+ * Moreover, actually the max size allowed by a container is provided by max_size(),
+ * that is usually equal to std::numeric_limits<std::ptrdiff_t>::max(), but this is checked
+ * just later by caen::resize().
+ *
+ * Practically, this could be a problem only on 32-bit systems, where usually
+ * caen::vector<std::byte>::max_size() == 0x7fffffff. For a scope firmware, it would
+ * need an event with 1'073'741'822 samples, for example 64 channels with 16'777'215
+ * samples, but this configuration currently is not supported by any digitizer.
+ *
+ * @tparam T			type of the elements
+ * @tparam Allocator	allocator
+ * @param v				vector
+ * @param size			size to be added
+ */
+template <typename T, typename Allocator, typename StdIntT>
+void safe_increase_size(vector<T, Allocator>& v, StdIntT size) {
+	// 1. compute required size using standard integer common type
+	const auto required_size = v.size() + size;
+	// 2. try to cast to container size type, or throw if it overflows
+	const auto safe_required_size = boost::numeric_cast<typename vector<T, Allocator>::size_type>(required_size);
+	// 3.resize
+	caen::resize(v, safe_required_size);
 }
 
 /**

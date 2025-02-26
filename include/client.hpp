@@ -40,6 +40,7 @@
 #include <cstdarg>
 #include <list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -49,7 +50,6 @@
 
 #include <CAEN_FELib.h>
 
-#include "cpp-utility/optional.hpp"
 #include "endpoints/endpoint.hpp"
 #include "library_logger.hpp"
 #include "lib_definitions.hpp"
@@ -68,12 +68,12 @@ struct url_data {
 	std::string _fragment;
 
 	// Custom query fields
-	caen::optional<bool> _monitor;
-	caen::optional<spdlog::level::level_enum> _log_level;
-	caen::optional<std::string> _pid;
-	caen::optional<int> _keepalive;
-	caen::optional<int> _rcvbuf;
-	caen::optional<int> _receiver_thread_affinity;
+	std::optional<bool> _monitor;
+	std::optional<spdlog::level::level_enum> _log_level;
+	std::optional<std::string> _pid;
+	std::optional<int> _keepalive;
+	std::optional<int> _rcvbuf;
+	std::optional<int> _receiver_thread_affinity;
 
 };
 

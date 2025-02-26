@@ -47,7 +47,6 @@
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
 #include <boost/core/ignore_unused.hpp>
-#include <boost/numeric/conversion/cast.hpp>
 
 #include <server_definitions.hpp>
 
@@ -80,42 +79,6 @@ namespace dig2 {
 namespace ep {
 
 namespace {
-
-/*
- * Check if cast from size to container size type is narrowing and, if safe, resize
- *
- * The problem arises since expected size is always provided as std::uint64_t in the buffer
- * header, while container sizes are expressed in std::size_t that depends on the system
- * architecture, and could be narrower than std::uint64_t.
- * If a 64-bit size is larger than std::numeric_limits<std::size_t>::max(), than
- * a cast to std::size_t would be performed with a narrowing conversion, i.e. with a bit
- * truncation of some most significant non-zero bits.
- *
- * This is extremely unlikely, since buffers are allocated at arm_acquisition() at the
- * maximum data size that depends on the current configuration of the board. In case of too
- * large values, there should be errors in resize(), invoked by arm_acquisition(). This
- * failure would happen only if max data size related parameters are changed are after
- * disarm, but with data still to be read from the FPGA, and the new size become too large
- * to be stored in a std::size_t.
- *
- * Moreover, actually the max size allowed by a container is provided by max_size(),
- * that is usually equal to std::numeric_limits<std::ptrdiff_t>::max(), but this is checked
- * just later by caen::resize().
- *
- * Practically, this could be a problem only on 32-bit systems, where usually
- * caen::vector<caen::byte>::max_size() == 0x7fffffff. For a scope firmware, it would
- * need an event with 1'073'741'822 samples, for example 64 channels with 16'777'215
- * samples, but this configuration currently is not supported by any digitizer.
- */
-template <typename Container, typename StdIntT>
-void safe_increase_size(Container& buffer, StdIntT size) {
-	// 1. compute required size using standard integer common type
-	const auto required_size = buffer.size() + size;
-	// 2. try to cast to container size type, or throw if it overflows
-	const auto safe_required_size = boost::numeric_cast<typename Container::size_type>(required_size);
-	// 3.resize
-	caen::resize(buffer, safe_required_size);
-}
 
 auto get_port(client& client, handle::internal_handle_t endpoint_handle) {
 	const auto res = client.get_value(endpoint_handle, "/port"s);
@@ -154,8 +117,7 @@ struct raw::endpoint_impl {
 		SPDLOG_LOGGER_TRACE(_logger, "{}(endpoint_handle={})", __func__, endpoint_handle);
 
 		// handle specific options
-		const auto& rcvbuf = client.get_url_data()._rcvbuf;
-		if (rcvbuf) {
+		if (auto&& rcvbuf = client.get_url_data()._rcvbuf; rcvbuf.has_value()) {
 			decltype(_socket)::receive_buffer_size option;
 			_socket.get_option(option);
 			const auto default_value = option.value();
@@ -457,20 +419,18 @@ private:
 	}
 
 	void set_state(state s) {
-		{
-			std::lock_guard<std::mutex> lk{_mtx_state};
-			_state = s;
-		}
+		std::lock_guard lk{_mtx_state};
+		_state = s;
 		_cv_state.notify_all();
 	}
 
 	void wait_state(state s) {
-		std::unique_lock<std::mutex> lk{_mtx_state};
+		std::unique_lock lk{_mtx_state};
 		_cv_state.wait(lk, [this, s] { return caen::is_in(_state, s); });
 	}
 
 	bool check_state(state s) {
-		std::lock_guard<std::mutex> lk{_mtx_state};
+		std::lock_guard lk{_mtx_state};
 		return (_state == s);
 	}
 
@@ -610,7 +570,7 @@ private:
 		SPDLOG_LOGGER_DEBUG(_logger, "header received (data_size={}, data_n_events={}, aligned={})", data_size, data_n_events, aligned);
 
 		{
-			std::unique_lock<std::mutex> lk{_mtx_state};
+			std::unique_lock lk{_mtx_state};
 
 			// data_size == 0 is a special software packed injected by the server after a clear
 			if (data_size == 0) {
@@ -619,7 +579,6 @@ private:
 				_clear_buffer = true;
 				SPDLOG_LOGGER_DEBUG(_logger, "set idle state");
 				_state = endpoint_impl::state::idle;
-				lk.unlock();
 				_cv_state.notify_all();
 				return;
 			}
@@ -642,7 +601,7 @@ private:
 		const auto offset = data.size();
 
 		// resize (no allocation, unless user changed max data size related parameters after disarm with data still to be read)
-		safe_increase_size(data, data_size);
+		caen::safe_increase_size(data, data_size);
 
 		const auto read_buffer = boost::asio::buffer(data) + offset;
 
@@ -839,7 +798,7 @@ private:
 	// members
 
 	struct raw_data {
-		caen::vector<caen::byte> _data;
+		caen::vector<std::byte> _data;
 		std::uint32_t _n_events;
 	};
 
@@ -864,9 +823,9 @@ private:
 
 	std::list<std::shared_ptr<sw_endpoint>> _sw_ep_list;
 
-	caen::vector<caen::byte> _header_buffer;
+	caen::vector<std::byte> _header_buffer;
 
-	static constexpr std::size_t circular_buffer_size{2};
+	static inline constexpr std::size_t circular_buffer_size{2};
 
 	caen::circular_buffer<raw_data, circular_buffer_size> _buffer;
 	args_list_t _args_list;

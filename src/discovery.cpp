@@ -44,15 +44,16 @@
 #include <stdexcept>
 #include <numeric>
 #include <list>
-#include <memory>
 #include <algorithm>
+#include <memory>
+#include <string_view>
 
-#include <boost/predef/os.h>
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/asio.hpp>
 #include <boost/asio/steady_timer.hpp>
+#include <boost/predef/os.h>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
-#include <boost/algorithm/string/predicate.hpp>
 #include <spdlog/fmt/fmt.h>
 
 #if BOOST_OS_WINDOWS
@@ -67,12 +68,20 @@
 #else
 #include "cpp-utility/bit.hpp"
 #endif
-#include "cpp-utility/string_view.hpp"
 #include "lib_error.hpp"
 #include "library_logger.hpp"
 
+#if SPDLOG_VERSION >= 11400
+/*
+ * fmt >= 10 requires explicix template specialization to use ostream formatter
+ */
+#include <spdlog/fmt/bundled/ostream.h>
+
+template <> struct fmt::formatter<boost::asio::ip::udp::endpoint> : ostream_formatter {};
+template <> struct fmt::formatter<std::ssub_match> : ostream_formatter {};
+#endif
+
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
@@ -90,7 +99,7 @@ struct line {
 		return r;
 	}
 	operator const std::string&() const noexcept { return _s; }
-	operator caen::string_view() const noexcept { return _s; }
+	operator std::string_view() const noexcept { return _s; }
 private:
 	std::string _s;
 };
@@ -128,10 +137,6 @@ struct stupid_http_client {
 
 private:
 
-	static constexpr auto& http_request() noexcept {
-		return "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n";
-	}
-
 	void get_to_buffer(const std::string& url) {
 
 		static const std::regex ex("(http|https)://([^/ :]+):?([^/ ]*)(/?[^ #?]*)\\x3f?([^ #]*)#?([^ ]*)"s);
@@ -140,22 +145,22 @@ private:
 		if (!regex_match(url, what, ex))
 			throw ex::invalid_argument("invalid url");
 
-		//auto& protocol = what[1];
+		[[maybe_unused]] const auto& protocol = what[1];
 		const auto& domain = what[2];
 		const auto& port = what[3];
 		const auto& path = what[4];
-		//auto& query = what[5];
+		[[maybe_unused]] const auto& query = what[5];
 
-		boost::asio::ip::tcp::resolver::query q(domain, port);
 		boost::asio::ip::tcp::resolver resolver(_io_context);
-		auto endpoint_iterator = resolver.resolve(q);
+		auto endpoint_iterator = resolver.resolve(domain.str(), port.str());
 
 		boost::asio::ip::tcp::socket socket(_io_context);
 		boost::asio::connect(socket, endpoint_iterator);
 
 		boost::asio::streambuf request;
 		std::ostream request_stream(&request);
-		fmt::print(request_stream, http_request(), path, domain);
+
+		fmt::print(request_stream, "GET {} HTTP/1.1\r\nHost: {}\r\nAccept: */*\r\nConnection: close\r\n\r\n", path, domain);
 
 		boost::system::error_code write_ec;
 		boost::asio::write(socket, request, write_ec);
@@ -176,7 +181,7 @@ private:
 
 		// for simplicity we only check if header response is HTTP (no check for HTTP code != 200)
 		// as the code will fail as soon as we'll try to parse the content
-		if (!boost::starts_with<caen::string_view>(*it, "HTTP/"_sv))
+		if (!boost::starts_with<std::string_view>(*it, "HTTP/"sv))
 			throw "invalid response"_ex;
 
 		// skip header, that ends with an empty line
@@ -249,29 +254,31 @@ struct device {
 	device& operator=(device&&) = default;
 
 	const std::string& get_model() const noexcept { return _model; }
-	const std::string& get_serial_number() const noexcept{ return _model; }
+	const std::string& get_serial_number() const noexcept { return _model; }
 	const std::string& get_ip() const noexcept { return _model; }
 	const std::string& get_type() const noexcept { return _model; }
 
-	static constexpr auto& key_model() noexcept { return "model"; }
-	static constexpr auto& key_serial_number() noexcept { return "serial_number"; }
-	static constexpr auto& key_ip() noexcept { return "ip"; }
-	static constexpr auto& key_type() noexcept { return "type"; }
-
 	friend void from_json(const nlohmann::json& j, device& e) {
-		caen::json::get_if_not_null(j, key_model(), e._model);
-		caen::json::get_if_not_null(j, key_serial_number(), e._serial_number);
-		caen::json::get_if_not_null(j, key_ip(), e._ip);
-		caen::json::get_if_not_null(j, key_type(), e._type);
+		caen::json::get_if_not_null(j, key_model, e._model);
+		caen::json::get_if_not_null(j, key_serial_number, e._serial_number);
+		caen::json::get_if_not_null(j, key_ip, e._ip);
+		caen::json::get_if_not_null(j, key_type, e._type);
 	}
 
 	friend void to_json(nlohmann::json& j, const device& e) {
-		caen::json::set(j, key_model(), e._model);
-		caen::json::set(j, key_serial_number(), e._serial_number);
-		caen::json::set(j, key_ip(), e._ip);
-		caen::json::set(j, key_type(), e._type);
+		caen::json::set(j, key_model, e._model);
+		caen::json::set(j, key_serial_number, e._serial_number);
+		caen::json::set(j, key_ip, e._ip);
+		caen::json::set(j, key_type, e._type);
 	}
+
 private:
+
+	static inline constexpr auto key_model = "model"sv;
+	static inline constexpr auto key_serial_number = "serial_number"sv;
+	static inline constexpr auto key_ip = "ip"sv;
+	static inline constexpr auto key_type = "type"sv;
+
 	std::string _model;
 	std::string _serial_number;
 	std::string _ip;
@@ -313,7 +320,7 @@ struct discover {
 #if BOOST_OS_WINDOWS
 		boost::asio::ip::udp::resolver resolver(_io_context);
 		const auto it = resolver.resolve(boost::asio::ip::host_name(), "");
-		std::transform(it, decltype(it)(), std::back_inserter(_local_interfaces), [](const auto& resolver_entry) {
+		std::transform(it.begin(), it.end(), std::back_inserter(_local_interfaces), [](const auto& resolver_entry) {
 			return resolver_entry.endpoint().address();
 		});
 #else
@@ -334,7 +341,7 @@ struct discover {
 				auto sin_addr_ptr = &sockaddr_in_member.sin_addr;
 				if (::inet_ntop(ifa_member->sa_family, sin_addr_ptr, buff.data(), buff.size()) == nullptr)
 					throw std::runtime_error(fmt::format("inet_ntop failed: {}", std::strerror(errno)));
-				_local_interfaces.emplace_back(boost::asio::ip::address::from_string(buff.data()));
+				_local_interfaces.emplace_back(boost::asio::ip::make_address(buff.data()));
 				break;
 			}
 			default:
@@ -361,15 +368,15 @@ struct discover {
 					_v6._socket.send_to(_v6._ssdp_request_buffer, _v6._multicast_ep);
 				}
 			}
-			_request_timer.expires_from_now(1s);
+			_request_timer.expires_after(1s);
 			periodic_send();
 		});
 	}
 
 	void send(std::chrono::milliseconds timeout_ms) {
-		_request_timer.expires_from_now(0ms);
+		_request_timer.expires_after(0ms);
 		periodic_send();
-		_timeout_timer.expires_from_now(timeout_ms);
+		_timeout_timer.expires_after(timeout_ms);
 		_timeout_timer.async_wait([this](const boost::system::error_code& error) {
 			if (error) {
 				_logger->error("async_wait error: {}", error.message());
@@ -396,17 +403,17 @@ struct discover {
 				const std::string remote_ip = local_ep.address().to_string();
 
 				// find line starting with "location:"
-				static constexpr auto prefix_view = "location:"_sv;
-				auto it = std::find_if(line_iterator(response_stream), line_iterator(), [&](caen::string_view line_view) {
+				static constexpr auto prefix_view = "location:"sv;
+				auto it = std::find_if(line_iterator(response_stream), line_iterator(), [&](std::string_view line_view) {
 					return boost::istarts_with(line_view, prefix_view);
 				});
 
 				if (it != line_iterator()) {
-					caen::string_view line_view(*it);
+					std::string_view line_view(*it);
 
 					// remove "location:" and eventual additional whitespaces
 					line_view.remove_prefix(prefix_view.size());
-					line_view.remove_prefix(std::min(line_view.find_first_not_of(" \t\r\f\v\n"_sv), line_view.size()));
+					line_view.remove_prefix(std::min(line_view.find_first_not_of(" \t\r\f\v\n"sv), line_view.size()));
 
 					// get xml content from url
 					detail::stupid_http_client hc(_io_context);
@@ -469,7 +476,7 @@ private:
 		boost::asio::ip::udp::endpoint _local_ep;
 		boost::asio::ip::udp::socket _socket;
 	};
-	static constexpr unsigned short ssdp_port{1900};
+	static inline constexpr unsigned short ssdp_port{1900};
 	std::shared_ptr<spdlog::logger> _logger;
 	boost::asio::io_context _io_context;
 	boost::asio::steady_timer _timeout_timer;

@@ -41,6 +41,7 @@
 #include <list>
 #include <mutex>
 #include <regex>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -56,6 +57,7 @@
 #include <boost/version.hpp>
 #include <nlohmann/json.hpp>
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/fmt/ranges.h>
 
 #if BOOST_OS_LINUX && BOOST_VERSION < 107000
 // network_v6 missing asio.hpp until Boost 1.70
@@ -72,22 +74,31 @@
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/socket_option.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "endpoints/dpppha.hpp"
 #include "endpoints/dpppsd.hpp"
 #include "endpoints/dppzle.hpp"
 #include "endpoints/events.hpp"
 #include "endpoints/raw.hpp"
 #include "endpoints/rawudp.hpp"
+#include "endpoints/opendata.hpp"
 #include "endpoints/opendpp.hpp"
 #include "endpoints/scope.hpp"
+
+#if SPDLOG_VERSION >= 11400
+/*
+ * fmt >= 10 requires explicix template specialization to use ostream formatter
+ */
+#include <spdlog/fmt/bundled/ostream.h>
+
+template <> struct fmt::formatter<boost::asio::ip::address> : ostream_formatter {};
+template <> struct fmt::formatter<boost::asio::ip::tcp::endpoint> : ostream_formatter {};
+#endif
 
 namespace caen {
 
 namespace dig2 {
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace {
 
@@ -113,17 +124,17 @@ std::string pid_to_ipv6(const String& pid_str) {
 std::string url_to_address(const url_data& data) {
 
 	// .internal TLD is reserved (https://www.rfc-editor.org/rfc/rfc6762#appendix-G)
-	constexpr static auto authority_internal = "caen.internal"_sv;
-	constexpr static auto authority_legacy_usb_prefix = "usb:"_sv;
+	constexpr static auto authority_internal = "caen.internal"sv;
+	constexpr static auto authority_legacy_usb_prefix = "usb:"sv;
 
 	/*
 	 * Routine to handle reserved URI
 	 */
 	if (caen::string::iequals(data._authority, authority_internal)) {
 
-		constexpr static auto path_openarm = "/openarm"_sv;
-		constexpr static auto path_usb_prefix = "/usb/"_sv;
-		constexpr static auto path_usb_prefix_alt = "/usb"_sv;
+		constexpr static auto path_openarm = "/openarm"sv;
+		constexpr static auto path_usb_prefix = "/usb/"sv;
+		constexpr static auto path_usb_prefix_alt = "/usb"sv;
 
 		/*
 		 * Use case: dig2://caen.internal/openarm
@@ -141,7 +152,7 @@ std::string url_to_address(const url_data& data) {
 		 * Routine to convert PID to its IPv6 address.
 		 */
 		if (boost::istarts_with(data._path, path_usb_prefix)) {
-			caen::string_view path_view{data._path};
+			std::string_view path_view{data._path};
 			path_view.remove_prefix(path_usb_prefix.size());
 			return pid_to_ipv6(path_view);
 		}
@@ -153,7 +164,7 @@ std::string url_to_address(const url_data& data) {
 		 * alternative to the previous case.
 		 */
 		if (caen::string::iequals(data._path, path_usb_prefix_alt)) {
-			if (!data._pid)
+			if (!data._pid.has_value())
 				throw "usb path requires pid query"_ex;
 			return pid_to_ipv6(*data._pid);
 		}
@@ -166,7 +177,7 @@ std::string url_to_address(const url_data& data) {
 	 * Routine to convert usb:PID to its IPv6 address.
 	 */
 	if (boost::istarts_with(data._authority, authority_legacy_usb_prefix)) {
-		caen::string_view authority_view{data._authority};
+		std::string_view authority_view{data._authority};
 		authority_view.remove_prefix(authority_legacy_usb_prefix.size());
 		return pid_to_ipv6(authority_view);
 	} 
@@ -207,7 +218,7 @@ struct client::client_impl {
 
 	client_impl(const url_data& data)
 	: _url_data(data)
-	, _monitor(data._monitor.value_or(default_monitor()))
+	, _monitor(data._monitor.value_or(default_monitor))
 	, _logger{library_logger::create_logger(_url_data._authority, _url_data._log_level)}
 	, _io_context{}
 	, _socket(_io_context)
@@ -220,7 +231,7 @@ struct client::client_impl {
 	, _n_channels{} {
 
 		// set keep alive interval to patch rare missing data from digitizer
-		const auto keepalive = _url_data._keepalive.value_or(default_keepalive_interval());
+		const auto keepalive = _url_data._keepalive.value_or(default_keepalive_interval);
 		if (keepalive != 0) {
 			_socket.set_option(boost::asio::socket_base::keep_alive{true});
 			_socket.set_option(caen::socket_option::keep_interval{keepalive});
@@ -289,8 +300,7 @@ struct client::client_impl {
 
 		// add other endpoints
 		for (auto&& handle : get_child_handles(_digitizer_internal_handle, "/endpoint"s)) {
-			const auto prop = get_node_properties(handle, std::string{});
-			if (prop.second == ::CAEN_FELib_NodeType_t::CAEN_FELib_ENDPOINT) {
+			if (const auto prop = get_node_properties(handle, std::string{}); prop.second == ::CAEN_FELib_NodeType_t::CAEN_FELib_ENDPOINT) {
 				BOOST_ASSERT_MSG(prop.first == boost::to_lower_copy(prop.first), "node name must be returned lowercase by backend-server");
 				switch (caen::hash::generator{}(prop.first)) {
 					using namespace caen::hash::literals;
@@ -303,7 +313,7 @@ struct client::client_impl {
 					ep->set_is_decoded_getter([this]() {
 						// pretty simple version, just check if is not raw
 						const auto active_endpoint_s = get_value(_digitizer_internal_handle, "/endpoint/par/activeendpoint"s, std::string{});
-						return !caen::string::iequals(active_endpoint_s, "raw"_sv);
+						return !caen::string::iequals(active_endpoint_s, "raw"sv);
 					});
 					// set as main hardware endpoint
 					BOOST_ASSERT_MSG(hw_ep == nullptr, "defining more than one hardware endpoint");
@@ -319,7 +329,7 @@ struct client::client_impl {
 					ep->set_is_decoded_getter([this]() {
 						// pretty simple version, just check if is not raw
 						const auto active_endpoint_s = get_value(_digitizer_internal_handle, "/endpoint/par/activeendpoint"s, std::string{});
-						return !caen::string::iequals(active_endpoint_s, "rawudp"_sv);
+						return !caen::string::iequals(active_endpoint_s, "rawudp"sv);
 					});
 					// set as main hardware endpoint
 					BOOST_ASSERT_MSG(hw_ep == nullptr, "defining more than one hardware endpoint");
@@ -327,14 +337,7 @@ struct client::client_impl {
 					break;
 				}
 				case "opendata"_h: {
-					auto ep = create_endpoint<ep::raw>(client, handle);
-					ep->set_max_size_getter([] {
-						return std::size_t{1 << 26}; // fixed, opendatasize can be changed in run
-					});
-					ep->set_is_decoded_getter([]() {
-						// cannot be decoded
-						return false;
-					});
+					auto ep = create_endpoint<ep::opendata>(client, handle);
 					break;
 				}
 				case "scope"_h: {
@@ -500,8 +503,8 @@ private:
 	 * These two constants cannot be made static constexpr variables since clang <= 5
 	 * (supporting only C++14) does not inline their values on boost::optional::value_or.
 	 */
-	static constexpr int default_keepalive_interval() noexcept { return 4; }
-	static constexpr bool default_monitor() noexcept { return false; }
+	static inline constexpr int default_keepalive_interval{4};
+	static inline constexpr bool default_monitor{false};
 
 	static constexpr ep::endpoint::timeout_t get_timeout(int timeout) noexcept {
 		return ep::endpoint::timeout_t{timeout};
@@ -510,7 +513,7 @@ private:
 	template <typename Duration, typename Callable>
 	void run_context_for(Duration&& timeout, Callable stopped_callback) {
 
-		_io_context.reset();
+		_io_context.restart();
 
 		/*
 		 * See example at
@@ -587,7 +590,7 @@ private:
 
 		SPDLOG_LOGGER_DEBUG(_logger, R"(sending {}({}, "{}", "{}"))", caen::json::to_json_string(cmd.get_cmd()), cmd.get_handle(), cmd.get_query(), cmd.get_value());
 
-		std::array<caen::byte, server_definitions::header_size> header_buffer{};
+		std::array<std::byte, server_definitions::header_size> header_buffer{};
 
 		// generate request
 		auto b_it = header_buffer.begin();
@@ -601,7 +604,7 @@ private:
 			boost::asio::buffer(request_string)
 		};
 
-		std::unique_lock<std::mutex> lk{ _mtx };
+		std::unique_lock lk{ _mtx };
 
 		boost::asio::write(_socket, buffers);
 
@@ -662,7 +665,7 @@ private:
 				const auto has_cdc = [this] {
 					try {
 						const auto has_cdc_s = get_value(_digitizer_internal_handle, "/par/hascdc"s, std::string{});
-						return caen::string::iequals(has_cdc_s, "True"_sv);
+						return caen::string::iequals(has_cdc_s, "True"sv);
 					}
 					catch (const std::exception&) {
 						// hascdc parameter not found, assuming false

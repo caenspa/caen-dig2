@@ -56,17 +56,17 @@ struct aggregate_endpoint : public sw_endpoint {
 protected:
 	struct dpp_aggregate_header {
 		struct s {
-			static constexpr std::size_t format{evt_header::s::format};
-			static constexpr std::size_t flush{1};
-			static constexpr std::size_t tbd_1{2};
-			static constexpr std::size_t board_fail{1};
-			static constexpr std::size_t aggregate_counter{24};
-			static constexpr std::size_t n_words{evt_header::s::n_words};
+			static inline constexpr std::size_t format{evt_header::s::format};
+			static inline constexpr std::size_t flush{1};
+			static inline constexpr std::size_t tbd_1{2};
+			static inline constexpr std::size_t board_fail{1};
+			static inline constexpr std::size_t aggregate_counter{24};
+			static inline constexpr std::size_t n_words{evt_header::s::n_words};
 			static_assert(flush + tbd_1 + board_fail + aggregate_counter == evt_header::s::implementation_defined, "invalid sizes");
 		};
 		// constants
-		static constexpr std::size_t aggregate_header_words{1};
-		static constexpr std::size_t aggregate_header_size{aggregate_header_words * word_size};
+		static inline constexpr std::size_t aggregate_header_words{1};
+		static inline constexpr std::size_t aggregate_header_size{aggregate_header_words * word_size};
 		// fields
 		evt_header::format _format;
 		bool _flush;
@@ -76,7 +76,7 @@ protected:
 		caen::uint_t<s::n_words>::fast _n_words;
 	};
 
-	bool decode_aggregate_header(const caen::byte*& p) noexcept;
+	bool decode_aggregate_header(const std::byte*& p) noexcept;
 	const dpp_aggregate_header& last_aggregate_header() const noexcept;
 
 	/*

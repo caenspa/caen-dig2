@@ -96,7 +96,7 @@ aggregate_endpoint::aggregate_endpoint(client& client, handle::internal_handle_t
 
 aggregate_endpoint::~aggregate_endpoint() = default;
 
-bool aggregate_endpoint::decode_aggregate_header(const caen::byte*& p) noexcept {
+bool aggregate_endpoint::decode_aggregate_header(const std::byte*& p) noexcept {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + dpp_aggregate_header::aggregate_header_size;

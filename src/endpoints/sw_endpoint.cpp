@@ -36,11 +36,11 @@
 
 #include "endpoints/sw_endpoint.hpp"
 
+#include <string_view>
+
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "client.hpp"
 
-using namespace caen::literals;
 using namespace std::literals;
 
 namespace caen {
@@ -64,7 +64,7 @@ sw_endpoint::~sw_endpoint() = default;
 
 bool sw_endpoint::is_decode_disabled() {
 	const auto active_endpoint_s = get_client().get_value(_pimpl->_active_endpoint_handle, std::string{});
-	return caen::string::iequals(active_endpoint_s, "raw"_sv);
+	return caen::string::iequals(active_endpoint_s, "raw"sv);
 }
 
 } // namespace ep

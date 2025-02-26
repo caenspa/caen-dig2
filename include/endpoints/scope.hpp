@@ -75,7 +75,7 @@ struct scope final : public sw_endpoint {
 	~scope();
 
 	void resize() override;
-	void decode(const caen::byte* p, std::size_t size) override;
+	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
@@ -89,25 +89,25 @@ private:
 	struct scope_evt {
 		struct s {
 			// 1st word
-			static constexpr std::size_t format{evt_header::s::format};
-			static constexpr std::size_t tbd_1{3};
-			static constexpr std::size_t board_fail{1};
-			static constexpr std::size_t trigger_id{24};
-			static constexpr std::size_t n_words{evt_header::s::n_words};
+			static inline constexpr std::size_t format{evt_header::s::format};
+			static inline constexpr std::size_t tbd_1{3};
+			static inline constexpr std::size_t board_fail{1};
+			static inline constexpr std::size_t trigger_id{24};
+			static inline constexpr std::size_t n_words{evt_header::s::n_words};
 			static_assert(tbd_1 + board_fail + trigger_id == evt_header::s::implementation_defined, "invalid sizes");
 			// 2nd word
-			static constexpr std::size_t flags{13};
-			static constexpr std::size_t samples_overlapped{3};
-			static constexpr std::size_t timestamp{48};
+			static inline constexpr std::size_t flags{13};
+			static inline constexpr std::size_t samples_overlapped{3};
+			static inline constexpr std::size_t timestamp{48};
 			// 3rd word
-			static constexpr std::size_t ch_mask{64};
+			static inline constexpr std::size_t ch_mask{64};
 			// waveform word
-			static constexpr std::size_t sample{16};
+			static inline constexpr std::size_t sample{16};
 		};
 		// constants
-		static constexpr std::size_t evt_header_words{3};
-		static constexpr std::size_t evt_header_size{evt_header_words * word_size};
-		static constexpr std::size_t samples_per_word{word_bit_size / s::sample};
+		static inline constexpr std::size_t evt_header_words{3};
+		static inline constexpr std::size_t evt_header_size{evt_header_words * word_size};
+		static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
 		// fields
 		evt_header::format _format;
 		// - tbd_1 not saved into event

@@ -39,6 +39,7 @@
 
 #include <chrono>
 #include <cstdarg>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <ratio>
@@ -48,13 +49,11 @@
 #include <utility>
 
 #include <boost/core/noncopyable.hpp>
-#include <boost/static_assert.hpp>
 #include <boost/type_traits.hpp>
 #include <nlohmann/json.hpp>
 
 #include "cpp-utility/args.hpp"
-#include "cpp-utility/byte.hpp"
-#include "cpp-utility/type_traits.hpp"
+#include "cpp-utility/dependent_false.hpp"
 #include "cpp-utility/vector.hpp"
 #include "lib_definitions.hpp"
 #include "lib_error.hpp"
@@ -109,8 +108,8 @@ private:
 
 };
 
-BOOST_STATIC_ASSERT(std::is_abstract<endpoint>::value);
-BOOST_STATIC_ASSERT(std::has_virtual_destructor<endpoint>::value);
+static_assert(std::is_abstract<endpoint>::value);
+static_assert(std::has_virtual_destructor<endpoint>::value);
 
 using namespace std::string_literals;
 
@@ -159,29 +158,18 @@ template <> struct ref_type<tp::LONG_DOUBLE>	{ using type = long double;		};
 template <tp Type>
 using ref_type_t = typename ref_type<Type>::type;
 
-// default case (compile time error)
 template <std::size_t Dim>
-struct insert_value_helper {};
-
-template <>
-struct insert_value_helper<0> {
+struct insert_value_helper {
 	template <endpoint::types Type, typename... Args>
 	static void insert(Args&&... args) noexcept {
-		caen::args::insert_value<ref_type_t<Type>>(std::forward<Args>(args)...);
-	}
-};
-template <>
-struct insert_value_helper<1> {
-	template <endpoint::types Type, typename... Args>
-	static void insert(Args&&... args) noexcept {
-		caen::args::insert_array<ref_type_t<Type>>(std::forward<Args>(args)...);
-	}
-};
-template <>
-struct insert_value_helper<2> {
-	template <endpoint::types Type, typename... Args>
-	static void insert(Args&&... args) noexcept {
-		caen::args::insert_matrix<ref_type_t<Type>>(std::forward<Args>(args)...);
+		if constexpr (Dim == 0)
+			caen::args::insert_value<ref_type_t<Type>>(std::forward<Args>(args)...);
+		else if constexpr (Dim == 1)
+			caen::args::insert_array<ref_type_t<Type>>(std::forward<Args>(args)...);
+		else if constexpr (Dim == 2)
+			caen::args::insert_matrix<ref_type_t<Type>>(std::forward<Args>(args)...);
+		else
+			static_assert(caen::dependent_false<std::integral_constant<std::size_t, Dim>>::value, "invalid dimension");
 	}
 };
 
@@ -222,7 +210,7 @@ void put_argument_raw_data(std::va_list *args, endpoint::types t, const TIn* p, 
 	using tp = endpoint::types;
 	using namespace detail;
 	case tp::U8:
-		caen::args::insert_raw_data<caen::byte>(args, p, size);
+		caen::args::insert_raw_data<std::byte>(args, p, size);
 		break;
 	default:
 		throw ex::invalid_argument("invalid type");
@@ -246,25 +234,25 @@ namespace detail {
 template <typename T, typename = void>
 struct is_names_defined : std::false_type {};
 template <typename T>
-struct is_names_defined<T, caen::void_t<typename T::names>> : std::is_enum<typename T::names> {};
+struct is_names_defined<T, std::void_t<typename T::names>> : std::is_enum<typename T::names> {};
 
 template <typename T, typename = void>
 struct is_types_defined : std::false_type {};
 template <typename T>
-struct is_types_defined<T, caen::void_t<typename T::types>> : std::is_enum<typename T::types> {};
+struct is_types_defined<T, std::void_t<typename T::types>> : std::is_enum<typename T::types> {};
 
 template <typename T, typename = void>
 struct is_args_list_t_defined : std::false_type {};
 template <typename T>
-struct is_args_list_t_defined<T, caen::void_t<typename T::args_list_t>> : std::true_type {};
+struct is_args_list_t_defined<T, std::void_t<typename T::args_list_t>> : std::true_type {};
 
 template <typename T, typename = void>
 struct is_unknown_defined : std::false_type {};
 template <typename T>
-struct is_unknown_defined<T, caen::void_t<decltype(T::UNKNOWN)>> : std::is_enum<T> {};
+struct is_unknown_defined<T, std::void_t<decltype(T::UNKNOWN)>> : std::is_enum<T> {};
 
 template <typename Type, typename... Types>
-struct is_type_any_of : caen::disjunction<std::is_same<Type, Types>...> {};
+struct is_type_any_of : std::disjunction<std::is_same<Type, Types>...> {};
 
 namespace sanity_checks {
 
@@ -293,8 +281,8 @@ constexpr bool test_is_type_any_of() noexcept {
 	return ret;
 }
 
-BOOST_STATIC_ASSERT(test_is_defined());
-BOOST_STATIC_ASSERT(test_is_type_any_of());
+static_assert(test_is_defined());
+static_assert(test_is_type_any_of());
 
 } // namespace sanity_checks
 

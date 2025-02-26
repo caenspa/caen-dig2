@@ -11,13 +11,31 @@
 -----------------------------------------------------------------------------
 
 
+v1.7.0 (25/02/2025)
+-------------------
+
+New features:
+- Support for 16-bit analog probe on DPP-PHA.
+- Compilers are required to support C++17.
+- OpenData endpoint now can be used even if the digitizer is not armed.
+- Add support for INFO field on Open DPP endpoint, a 7-bit unsigned integer
+    at bits [48:54] of the first event word.
+- Add build tests for Clang 19 and for Boost 1.87.
+
+Fixes:
+- Fix build with Boost 1.87.
+- Fix build with spdlog >= 1.14. Drop support for spdlog < 1.10.
+- On Windows, default log path changed from %APPDATA%\CAEN to
+    %LOCALAPPDATA%\CAEN.
+
+
 v1.6.1 (17/06/2024)
 -------------------
 
 Fixes:
 - Revert the fix on v1.6.0 about "disabling send operations right after the
     connection" because, at least on Windows, makes the operating system to
-    close the communication socket after 2 minutes of inactivity
+    close the communication socket after 2 minutes of inactivity.
 - Minor performance improvement on DPP-PSD decode.
 
 

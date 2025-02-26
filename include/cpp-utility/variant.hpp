@@ -37,8 +37,6 @@
 #ifndef CAEN_INCLUDE_CPP_UTILITY_VARIANT_HPP_
 #define CAEN_INCLUDE_CPP_UTILITY_VARIANT_HPP_
 
-#include <type_traits>
-
 #if __cplusplus >= 201703L
 #include <variant>
 #endif
@@ -91,6 +89,8 @@
 #include <boost/variant2/variant.hpp>
 #define CAEN_VARIANT_USE_BOOST_VARIANT2
 #endif
+
+#include "type_traits.hpp"
 
 namespace caen {
 
@@ -286,6 +286,51 @@ using std::variant_size;
 
 } // namespace cxx17
 #endif
+
+namespace detail {
+
+template <typename T, typename Variant>
+struct is_in_variant;
+
+template <typename T, typename... Types>
+struct is_in_variant<T, caen::variant<Types...>> : caen::disjunction<std::is_same<T, Types>...> {};
+
+template <typename T, typename Variant, bool = is_in_variant<T, Variant>::value>
+struct add_type_to_variant;
+
+template <typename T, typename... Types>
+struct add_type_to_variant<T, std::variant<Types...>, false> {
+	using type = caen::variant<Types..., T>;
+};
+
+template <typename T, typename... Types>
+struct add_type_to_variant<T, std::variant<Types...>, true> {
+	using type = caen::variant<Types...>;
+};
+
+template <typename Variant, typename... Types>
+struct make_unique_variant;
+
+template <typename Variant>
+struct make_unique_variant<Variant> {
+	using type = Variant;
+};
+
+template <typename Variant, typename T, typename... Types>
+struct make_unique_variant<Variant, T, Types...> {
+	using type = typename make_unique_variant<typename add_type_to_variant<T, Variant>::type, Types...>::type;
+};
+
+} // namespace detail
+
+/**
+ * @brief Helper function to create an instance of `caen::variant` with unique types.
+ *
+ * Useful to generate a variant that does not fail with the default constructor
+ * when trying to initialize with a type that is present more than once in the variant.
+ */
+template <typename... Types>
+using unique_variant = typename detail::make_unique_variant<std::variant<>, Types...>::type;
 
 } // namespace caen
 

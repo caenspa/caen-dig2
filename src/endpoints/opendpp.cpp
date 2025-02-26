@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string_view>
 
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
@@ -51,7 +52,6 @@
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "cpp-utility/to_address.hpp"
 #include "client.hpp"
 #include "data_format_utils.hpp"
@@ -59,7 +59,6 @@
 #include "library_logger.hpp"
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
@@ -79,7 +78,7 @@ struct opendpp::endpoint_impl {
 		data_format_utils<opendpp>::parse_data_format(_args_list, json_format);
 	}
 
-	static constexpr std::size_t circular_buffer_size{4096};
+	static inline constexpr std::size_t circular_buffer_size{4096};
 
 	std::shared_ptr<spdlog::logger> _logger;
 	caen::circular_buffer<hit_evt, circular_buffer_size> _buffer;
@@ -114,7 +113,7 @@ void opendpp::resize() {
 
 		const auto is_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"_sv);
+			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
 		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::filtered(is_enabled);
@@ -138,7 +137,7 @@ void opendpp::resize() {
 	is_clear_required_and_reset();
 }
 
-void opendpp::decode(const caen::byte* p, std::size_t size) {
+void opendpp::decode(const std::byte* p, std::size_t size) {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + size;
@@ -165,7 +164,7 @@ void opendpp::decode(const caen::byte* p, std::size_t size) {
 	BOOST_ASSERT_MSG(p == p_end, "inconsistent decoding");
 }
 
-void opendpp::decode_hit(const caen::byte*& p) {
+void opendpp::decode_hit(const std::byte*& p) {
 
 	auto& buffer = _pimpl->_buffer;
 
@@ -237,7 +236,7 @@ void opendpp::decode_hit(const caen::byte*& p) {
 		// additional user words
 		while (!is_last_word) {
 			caen::serdes::deserialize(p, word);
-			caen::bit::mask_and_right_shift<hit_evt::s::user_info>(word, caen::emplace_back(evt._user_info));
+			caen::bit::mask_and_right_shift<hit_evt::s::user_info>(word, evt._user_info.emplace_back());
 			caen::bit::mask_and_right_shift<hit_evt::s::last_word>(word, is_last_word);
 			BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
 		}
@@ -260,7 +259,7 @@ void opendpp::decode_hit(const caen::byte*& p) {
 	buffer.end_writing_relaxed();
 }
 
-void opendpp::decode_hit_waveform(const caen::byte*& p, hit_evt::waveform_t& waveform, bool& truncated) {
+void opendpp::decode_hit_waveform(const std::byte*& p, hit_evt::waveform_t& waveform, bool& truncated) {
 
 	word_t word;
 
@@ -275,7 +274,7 @@ void opendpp::decode_hit_waveform(const caen::byte*& p, hit_evt::waveform_t& wav
 	const auto n_samples = boost::numeric_cast<std::size_t>(waveform_n_words * hit_evt::samples_per_word);
 
 	// resize (no allocation)
-	caen::resize(waveform, n_samples); // memory already reserved: no allocation should be made
+	caen::resize(waveform, n_samples);
 
 	for (auto it = waveform.begin(); it != waveform.end(); it += hit_evt::samples_per_word) {
 
@@ -284,13 +283,9 @@ void opendpp::decode_hit_waveform(const caen::byte*& p, hit_evt::waveform_t& wav
 		caen::serdes::deserialize(p, word);
 
 		/*
-		 * In little-endian systems the loop can be replaced with `std::memcpy`:
-		 * it is faster, but it is not portable on big-endian systems.
-		 * The loop version works also on big-endian systems. Recent compilers
-		 * (LLVM >= 12 and GCC >= 8) generate the same code of `std::memcpy` in
-		 * case of a little-endian system. MSVC does not optimize it, as of version 1933.
+		 * See comment in scope::decode
 		 */
-		if /* constexpr */ (caen::endian::native == caen::endian::little) {
+		if constexpr (caen::endian::native == caen::endian::little) {
 			std::memcpy(caen::to_address(it), &word, word_size);
 		} else {
 			for (auto i : caen::counting_range(hit_evt::samples_per_word))
@@ -323,6 +318,7 @@ opendpp::args_list_t opendpp::default_data_format() {
 std::size_t opendpp::data_format_dimension(names name) {
 	switch (name) {
 	case names::CHANNEL:
+	case names::INFO:
 	case names::TIMESTAMP:
 	case names::TIMESTAMP_NS:
 	case names::FINE_TIMESTAMP:
@@ -376,6 +372,9 @@ void opendpp::read_data(timeout_t timeout, std::va_list* args) {
 		switch (name) {
 		case names::CHANNEL:
 			utility::put_argument(args, type, evt._channel);
+			break;
+		case names::INFO:
+			utility::put_argument(args, type, evt._info);
 			break;
 		case names::TIMESTAMP:
 			utility::put_argument(args, type, evt._timestamp);

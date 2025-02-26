@@ -59,6 +59,7 @@ struct opendpp final : public aggregate_endpoint {
 	enum class names { // overrides endpoint::names
 		UNKNOWN,
 		CHANNEL,
+		INFO,
 		TIMESTAMP,
 		TIMESTAMP_NS,
 		FINE_TIMESTAMP,
@@ -84,7 +85,7 @@ struct opendpp final : public aggregate_endpoint {
 	~opendpp();
 
 	void resize() override;
-	void decode(const caen::byte* p, std::size_t size) override;
+	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
@@ -98,33 +99,33 @@ private:
 	struct hit_evt {
 		struct s {
 			// 1st word
-			static constexpr std::size_t last_word{1}; // first bit of each word
-			static constexpr std::size_t channel{7};
-			static constexpr std::size_t special_event{1};
-			static constexpr std::size_t info{7};
-			static constexpr std::size_t timestamp{48};
-			static constexpr std::size_t timestamp_reduced{32};
+			static inline constexpr std::size_t last_word{1}; // first bit of each word
+			static inline constexpr std::size_t channel{7};
+			static inline constexpr std::size_t special_event{1};
+			static inline constexpr std::size_t info{7};
+			static inline constexpr std::size_t timestamp{48};
+			static inline constexpr std::size_t timestamp_reduced{32};
 			// 2nd word
-			static constexpr std::size_t has_waveform{1};
-			static constexpr std::size_t flags_b{12};
-			static constexpr std::size_t flags_a{8};
-			static constexpr std::size_t psd{16};
-			static constexpr std::size_t fine_timestamp{10};
-			static constexpr std::size_t energy{16};
+			static inline constexpr std::size_t has_waveform{1};
+			static inline constexpr std::size_t flags_b{12};
+			static inline constexpr std::size_t flags_a{8};
+			static inline constexpr std::size_t psd{16};
+			static inline constexpr std::size_t fine_timestamp{10};
+			static inline constexpr std::size_t energy{16};
 			// nth word (user info)
-			static constexpr std::size_t user_info{63};
+			static inline constexpr std::size_t user_info{63};
 			// waveform size word
-			static constexpr std::size_t truncated{1};
-			static constexpr std::size_t tbd_1{51};
-			static constexpr std::size_t waveform_n_words{12};
+			static inline constexpr std::size_t truncated{1};
+			static inline constexpr std::size_t tbd_1{51};
+			static inline constexpr std::size_t waveform_n_words{12};
 			// waveform
-			static constexpr std::size_t sample{16};
+			static inline constexpr std::size_t sample{16};
 		};
 		// constants
-		static constexpr std::size_t samples_per_word{word_bit_size / s::sample};
-		static constexpr std::size_t max_user_info_words{4};
-		static constexpr std::size_t max_waveform_words{4095};
-		static constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
+		static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
+		static inline constexpr std::size_t max_user_info_words{4};
+		static inline constexpr std::size_t max_waveform_words{4095};
+		static inline constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
 		// typedefs
 		using waveform_t = caen::vector<caen::uint_t<s::sample>::least>;
 		// fields
@@ -155,8 +156,8 @@ private:
 	};
 
 	// decode internal implementation
-	void decode_hit(const caen::byte*& p);
-	void decode_hit_waveform(const caen::byte*& p, hit_evt::waveform_t& waveform, bool& truncated);
+	void decode_hit(const std::byte*& p);
+	void decode_hit_waveform(const std::byte*& p, hit_evt::waveform_t& waveform, bool& truncated);
 
 	struct endpoint_impl;
 	std::unique_ptr<endpoint_impl> _pimpl;
@@ -168,6 +169,7 @@ using namespace std::string_literals;
 NLOHMANN_JSON_SERIALIZE_ENUM(opendpp::names, {
 	{ opendpp::names::UNKNOWN,				nullptr					},
 	{ opendpp::names::CHANNEL,				"CHANNEL"s				},
+	{ opendpp::names::INFO,					"INFO"s					},
 	{ opendpp::names::TIMESTAMP,			"TIMESTAMP"s			},
 	{ opendpp::names::TIMESTAMP_NS,			"TIMESTAMP_NS"s			},
 	{ opendpp::names::FINE_TIMESTAMP,		"FINE_TIMESTAMP"s		},

@@ -54,7 +54,7 @@ with device.connect(dig2_uri) as dig:
 
     # Compute record length in samples
     reclen_ns = int(dig.ch[0].par.CHRECORDLENGTHT.value)  # Read back CHRECORDLENGTHT to check if there have been rounding
-    reclen = int(reclen_ns / sampling_period_ns)
+    reclen = reclen_ns // sampling_period_ns
 
     # Configure endpoint
     data_format = [
@@ -138,9 +138,9 @@ with device.connect(dig2_uri) as dig:
         try:
             endpoint.read_data(100, data)
         except error.Error as ex:
-            if ex.code == error.ErrorCode.TIMEOUT:
+            if ex.code is error.ErrorCode.TIMEOUT:
                 continue
-            if ex.code == error.ErrorCode.STOP:
+            if ex.code is error.ErrorCode.STOP:
                 break
             else:
                 raise ex

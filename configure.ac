@@ -47,8 +47,7 @@ AX_COMPILER_VERSION
 AX_COMPARE_VERSION([$ax_cv_cxx_compiler_version], [eq1], [11], [cxx_compiler_version_11="yes"])
 
 # Checks for compiler support
-AX_CXX_COMPILE_STDCXX([14], [noext], [mandatory])
-AX_CXX_COMPILE_STDCXX([17], [noext], [optional])
+AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
 AS_IF(
 [test "x$ax_cv_cxx_compiler_vendor" = x"clang" && test "x$cxx_compiler_version_11" = x"yes"], [
 	# Clang 11 crashes when compiling with -std=c++20

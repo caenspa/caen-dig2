@@ -170,6 +170,7 @@ using fnv1a_64 = xor_product_impl<std::uint64_t, fnv1_64::offset_basis, fnv0_64:
 using djb2 = product_sum_impl<std::uint32_t, std::uint32_t{0x1505}, std::uint32_t{0x21}>;			//!< 32-bit DJB2.
 using djb2a = product_xor_impl<std::uint32_t, djb2::offset_basis, djb2::prime>;						//!< 32-bit DJB2a.
 using sdbm = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x1003f}>;			//!< 32-bit SDBM hash algorithm.
+using bkdr = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x83}>;				//!< 32-bit BKDR.
 using lose_lose = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x1}>;			//!< 32-bit lose-lose from K&R (1st ed). @warning Extremely simple, terrible hashing.
 /** @} */
 
@@ -188,6 +189,7 @@ constexpr bool hello_word_consistency(Args&&... args) noexcept {
 	ret &= (djb2{}(std::forward<Args>(args)...) == std::uint32_t{0x3551c8c1});
 	ret &= (djb2a{}(std::forward<Args>(args)...) == std::uint32_t{0xf8c65345});
 	ret &= (sdbm{}(std::forward<Args>(args)...) == std::uint32_t{0x19ae84c4});
+	ret &= (bkdr{}(std::forward<Args>(args)...) == std::uint32_t{0x4e195644});
 	ret &= (lose_lose{}(std::forward<Args>(args)...) == std::uint32_t{0x45c});
 	return ret;
 }
@@ -207,18 +209,48 @@ constexpr bool test_hash_utils_2() noexcept {
 	// sanity checks with strings known to provide null hash
 	// see http://www.isthe.com/chongo/tech/comp/fnv/index.html
 	bool ret{true};
+	ret &= (!fnv1_32{}("\aevJ;"));
 	ret &= (!fnv1_32{}("ba,1q"));
 	ret &= (!fnv1_32{}("T u{["));
 	ret &= (!fnv1_32{}("03SB["));
+	ret &= (!fnv1_32{}("3d7A5K"));
+	ret &= (!fnv1_32{}("9q6Mq3"));
+	ret &= (!fnv1_32{}("HHYSLE"));
+	ret &= (!fnv1_32{}("TrLdZ1"));
+	ret &= (!fnv1_32{}("VL3BqC"));
+	ret &= (!fnv1_32{}("WAd2`W"));
+	ret &= (!fnv1_32{}("YUo19l"));
+	ret &= (!fnv1_32{}("Yf6hP6"));
+	ret &= (!fnv1_32{}("hIrjFj"));
+	ret &= (!fnv1_32{}("n`bv3R"));
+	ret &= (!fnv1_32{}("plIzl`"));
+	ret &= (!fnv1_32{}("uMk`9Q"));
+	ret &= (!fnv1_32{}("ysopHl"));
+	ret &= (!fnv1_32{}("zcIkCe"));
 	ret &= (!fnv1_64{}("!v)EYwYVk&"));
 	ret &= (!fnv1_64{}("Mt5Kexny31n"));
 	ret &= (!fnv1_64{}("OjSHjikPNYV"));
 	ret &= (!fnv1_64{}("YIA9YWMOARX"));
-	ret &= (!fnv1a_32{}("eSN.1"));
-	ret &= (!fnv1a_32{}("68m* "));
 	ret &= (!fnv1a_32{}("+!=yG"));
+	ret &= (!fnv1a_32{}("68m* "));
+	ret &= (!fnv1a_32{}("eSN.1"));
+	ret &= (!fnv1a_32{}("Y\b&`b"));
+	ret &= (!fnv1a_32{}("3pjNqM"));
+	ret &= (!fnv1a_32{}("5R0Lg7"));
+	ret &= (!fnv1a_32{}("7oE486"));
+	ret &= (!fnv1a_32{}("BR42qf"));
+	ret &= (!fnv1a_32{}("FouBSr"));
+	ret &= (!fnv1a_32{}("GkkzFD"));
+	ret &= (!fnv1a_32{}("HVGZq9"));
+	ret &= (!fnv1a_32{}("IwPSdT"));
+	ret &= (!fnv1a_32{}("`nrY3G"));
+	ret &= (!fnv1a_32{}("qzs0UD"));
+	ret &= (!fnv1a_32{}("sXbssr"));
+	ret &= (!fnv1a_32{}("uh4tSI"));
 	ret &= (!fnv1a_64{}("!0IC=VloaY"));
+	ret &= (!fnv1a_64{}("=. hx\"iX<;"));
 	ret &= (!fnv1a_64{}("QvXtM>@Fp%"));
+	ret &= (!fnv1a_64{}("_\"kWk=-v$c"));
 	ret &= (!fnv1a_64{}("77kepQFQ8Kl"));
 	return ret;
 }

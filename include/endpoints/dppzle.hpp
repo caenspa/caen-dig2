@@ -84,7 +84,7 @@ struct dppzle final : public aggregate_endpoint {
 	~dppzle();
 
 	void resize() override;
-	void decode(const caen::byte* p, std::size_t size) override;
+	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
@@ -98,34 +98,34 @@ private:
 	struct zle_evt {
 		struct s {
 			// 1st word
-			static constexpr std::size_t last_word{1}; // first bit of each word
-			static constexpr std::size_t channel{7};
-			static constexpr std::size_t last_channel{1};
-			static constexpr std::size_t tbd_1{7};
-			static constexpr std::size_t timestamp{48};
+			static inline constexpr std::size_t last_word{1}; // first bit of each word
+			static inline constexpr std::size_t channel{7};
+			static inline constexpr std::size_t last_channel{1};
+			static inline constexpr std::size_t tbd_1{7};
+			static inline constexpr std::size_t timestamp{48};
 			// 2nd word (half word)
-			static constexpr std::size_t has_waveform{1};
-			static constexpr std::size_t tbd_2{10};
-			static constexpr std::size_t waveform_defvalue{16};
-			static constexpr std::size_t tbd_3{3};
-			static constexpr std::size_t even_counters_good{1};
+			static inline constexpr std::size_t has_waveform{1};
+			static inline constexpr std::size_t tbd_2{10};
+			static inline constexpr std::size_t waveform_defvalue{16};
+			static inline constexpr std::size_t tbd_3{3};
+			static inline constexpr std::size_t even_counters_good{1};
 			// tbd_4 is the unused half word (last high half word in case of even counters)
-			static constexpr std::size_t tbd_4{31};
+			static inline constexpr std::size_t tbd_4{31};
 			// waveform size word
-			static constexpr std::size_t truncated{1};
-			static constexpr std::size_t tbd_5{51};
-			static constexpr std::size_t waveform_n_words{12};
+			static inline constexpr std::size_t truncated{1};
+			static inline constexpr std::size_t tbd_5{51};
+			static inline constexpr std::size_t waveform_n_words{12};
 			// waveform
-			static constexpr std::size_t sample{16};
+			static inline constexpr std::size_t sample{16};
 		};
 		struct counter {
 			struct s {
 				// counter (half word)
-				static constexpr std::size_t tbd_1{1}; // bit occupied by last_word on even counters
-				static constexpr std::size_t last{1};
-				static constexpr std::size_t wave_truncated{1};
-				static constexpr std::size_t counters_truncated{1};
-				static constexpr std::size_t size{28};
+				static inline constexpr std::size_t tbd_1{1}; // bit occupied by last_word on even counters
+				static inline constexpr std::size_t last{1};
+				static inline constexpr std::size_t wave_truncated{1};
+				static inline constexpr std::size_t counters_truncated{1};
+				static inline constexpr std::size_t size{28};
 			};
 			// - tbd_1 not saved into event
 			bool _last;
@@ -149,10 +149,10 @@ private:
 			caen::vector<caen::uint_t<s::even_counters_good>::least> _sample_type; // software probe (better to avoid vector<bool>)
 		};
 		// constants
-		static constexpr std::size_t samples_per_word{word_bit_size / s::sample};
-		static constexpr std::size_t max_n_counters{1023};
-		static constexpr std::size_t max_waveform_words{4095};
-		static constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
+		static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
+		static inline constexpr std::size_t max_n_counters{1023};
+		static inline constexpr std::size_t max_waveform_words{4095};
+		static inline constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
 		// fields
 		// - channel not saved into event
 		// - last_channel not saved into event
@@ -184,8 +184,8 @@ private:
 	};
 
 	// decode internal implementation
-	void decode_hit(const caen::byte*& p);
-	void decode_hit_waveform(const caen::byte*& p, zle_evt::channel_data::waveform_t& waveform);
+	void decode_hit(const std::byte*& p);
+	void decode_hit_waveform(const std::byte*& p, zle_evt::channel_data::waveform_t& waveform);
 
 	struct endpoint_impl; // forward declaration
 	std::unique_ptr<endpoint_impl> _pimpl;

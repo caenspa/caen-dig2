@@ -38,16 +38,15 @@
 
 #include <iterator>
 #include <chrono>
+#include <string_view>
 
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
 #include <boost/range/algorithm/find.hpp>
 #include <boost/range/algorithm/transform.hpp>
-#include <boost/static_assert.hpp>
 #include <spdlog/fmt/fmt.h>
 
 #include "cpp-utility/scope_exit.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "CAENDig2.h"
 #include "client.hpp"
 #include "discovery.hpp"
@@ -57,14 +56,13 @@
 #include "lib_error.hpp"
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
 namespace dig2 {
 
-constexpr auto version_string = CAEN_DIG2_VERSION_STRING ""_sv;
-BOOST_STATIC_ASSERT(version_string.size() < max_size::str::version); // equal is not fine due to null terminator character
+constexpr auto version_string = CAEN_DIG2_VERSION_STRING ""sv;
+static_assert(version_string.size() < max_size::str::version); // equal is not fine due to null terminator character
 
 std::string get_lib_info() {
 	throw ex::not_yet_implemented(__func__);

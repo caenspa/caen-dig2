@@ -46,7 +46,6 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/fmt/fmt.h>
 
-#include "cpp-utility/type_traits.hpp"
 #include "json/json_data_format.hpp"
 #include "endpoints/endpoint.hpp"
 #include "lib_error.hpp"
@@ -64,16 +63,16 @@ struct is_default_data_format_defined
 	: std::false_type {};
 
 template <typename T, typename List>
-struct is_default_data_format_defined<T, List, caen::void_t<decltype(T::default_data_format)>>
-	: caen::is_invocable_r<List, decltype(T::default_data_format)> {};
+struct is_default_data_format_defined<T, List, std::void_t<decltype(T::default_data_format)>>
+	: std::is_invocable_r<List, decltype(T::default_data_format)> {};
 
 template <typename T, typename = void>
 struct is_data_format_dimension_defined
 	: std::false_type {};
 
 template <typename T>
-struct is_data_format_dimension_defined<T, caen::void_t<decltype(T::data_format_dimension)>>
-	: caen::is_invocable_r<std::size_t, decltype(T::data_format_dimension), typename utility::endpoint_traits<T>::names_type> {};
+struct is_data_format_dimension_defined<T, std::void_t<decltype(T::data_format_dimension)>>
+	: std::is_invocable_r<std::size_t, decltype(T::data_format_dimension), typename utility::endpoint_traits<T>::names_type> {};
 
 } // namespace detail
 

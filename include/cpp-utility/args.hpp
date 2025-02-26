@@ -358,12 +358,13 @@ void insert_array(std::va_list* args, const Container& value) noexcept {
 
 /**
  * @brief Copy a matrix in a `std::va_list`.
- * 
+ *
+ * User must provide a Iliffe vector (i.e. an array of pointers to arrays).
  * It is optimized with `std::memmove` when possible.
  * @pre Only arithmetic types are accepted (no enum, struct, ...).
  * @tparam TOut			output type
  * @tparam Container	container type, that must be a container of containers (value type must be convertible to @p TOut with no exception)
- * @param args			a pointer to initialized `std::va_list`
+ * @param args			a pointer to initialized `std::va_list` containing an Iliffe vector
  * @param value			the container matrix
  */
 template <typename TOut, typename Container>

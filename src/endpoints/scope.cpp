@@ -38,6 +38,7 @@
 
 #include <bitset>
 #include <cstring>
+#include <string_view>
 
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
@@ -55,7 +56,6 @@
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "cpp-utility/to_address.hpp"
 #include "client.hpp"
 #include "data_format_utils.hpp"
@@ -63,7 +63,6 @@
 #include "library_logger.hpp"
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
@@ -83,7 +82,7 @@ struct scope::endpoint_impl {
 		data_format_utils<scope>::parse_data_format(_args_list, json_format);
 	}
 
-	static constexpr std::size_t circular_buffer_size{4};
+	static inline constexpr std::size_t circular_buffer_size{4};
 
 	std::shared_ptr<spdlog::logger> _logger;
 	caen::circular_buffer<scope_evt, circular_buffer_size> _buffer;
@@ -120,7 +119,7 @@ void scope::resize() {
 
 		const auto is_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"_sv);
+			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
 		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::transformed(is_enabled);
@@ -135,8 +134,7 @@ void scope::resize() {
 		_pimpl->_buffer.apply_all([&ch_enabled_v, record_length](scope_evt& evt) {
 			for (auto&& w : boost::combine(evt._waveforms, ch_enabled_v)) {
 				auto& waveform = w.get<0>();
-				const auto enabled = w.get<1>();
-				if (enabled)
+				if (const auto enabled = w.get<1>(); enabled)
 					caen::reserve(waveform, record_length);
 				else
 					caen::reset(waveform);
@@ -189,7 +187,7 @@ decltype(auto) make_waveform_word_iterator(const ChList& ch_list, std::size_t n_
 
 } // unnamed namespace
 
-void scope::decode(const caen::byte* p, std::size_t size) {
+void scope::decode(const std::byte* p, std::size_t size) {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + size;
@@ -267,8 +265,7 @@ void scope::decode(const caen::byte* p, std::size_t size) {
 	for (auto&& w : evt._waveforms | boost::adaptors::indexed()) {
 		auto& waveform = w.value();
 		const auto i = w.index();
-		const auto participate = ch_mask[i];
-		if (participate) {
+		if (const auto participate = ch_mask[i]; participate) {
 			// resize (no allocation)
 			caen::resize(waveform, n_samples);
 			ch_list.emplace_back(i);
@@ -295,7 +292,7 @@ void scope::decode(const caen::byte* p, std::size_t size) {
 		 * (LLVM >= 12 and GCC >= 8) generate the same code of `std::memcpy` in
 		 * case of a little-endian system. MSVC does not optimize it, as of version 1933.
 		 */
-		if /* constexpr */ (caen::endian::native == caen::endian::little) {
+		if constexpr (caen::endian::native == caen::endian::little) {
 			std::memcpy(caen::to_address(it), &word, word_size);
 		} else {
 			for (auto i : caen::counting_range(scope_evt::samples_per_word))

@@ -36,7 +36,10 @@
 
 #include "endpoints/dpppsd.hpp"
 
+#include <functional>
 #include <mutex>
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include <boost/assert.hpp>
@@ -52,11 +55,9 @@
 #include "cpp-utility/circular_buffer.hpp"
 #include "cpp-utility/counting_range.hpp"
 #include "cpp-utility/lexical_cast.hpp"
-#include "cpp-utility/optional.hpp"
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "cpp-utility/to_underlying.hpp"
 #include "client.hpp"
 #include "data_format_utils.hpp"
@@ -64,7 +65,6 @@
 #include "library_logger.hpp"
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
@@ -100,7 +100,7 @@ struct dpppsd::endpoint_impl {
 		data_format_utils<dpppsd>::parse_data_format(_args_list, json_format);
 	}
 
-	static constexpr std::size_t circular_buffer_size{4096};
+	static inline constexpr std::size_t circular_buffer_size{4096};
 
 	std::shared_ptr<spdlog::logger> _logger;
 	caen::circular_buffer<hit_evt, circular_buffer_size> _buffer;
@@ -138,12 +138,12 @@ void dpppsd::resize() {
 
 		const auto is_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"_sv);
+			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
 		const auto is_wave_trg_enabled = [&client](auto i) {
 			const auto wavetriggersource_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/wavetriggersource", i));
-			return !caen::string::iequals(wavetriggersource_s, "disabled"_sv);
+			return !caen::string::iequals(wavetriggersource_s, "disabled"sv);
 		};
 
 		const auto get_record_length = [&client](auto i) {
@@ -173,7 +173,7 @@ void dpppsd::resize() {
 	is_clear_required_and_reset();
 }
 
-void dpppsd::decode(const caen::byte* p, std::size_t size) {
+void dpppsd::decode(const std::byte* p, std::size_t size) {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + size;
@@ -201,7 +201,7 @@ void dpppsd::decode(const caen::byte* p, std::size_t size) {
 
 }
 
-void dpppsd::decode_hit(const caen::byte*& p) {
+void dpppsd::decode_hit(const std::byte*& p) {
 
 	auto& buffer = _pimpl->_buffer;
 
@@ -228,8 +228,8 @@ void dpppsd::decode_hit(const caen::byte*& p) {
 	// declare fields not saved into event
 	bool special_event;
 	bool has_waveform;
-	caen::optional<stats::time_info> stats_time_info;
-	caen::optional<stats::counter_info> stats_counter_info;
+	std::optional<stats::time_info> stats_time_info;
+	std::optional<stats::counter_info> stats_counter_info;
 
 	// 1st word (mask_and_left_shift is slower but is used here to decode is_last_word first)
 	caen::serdes::deserialize(p, word);
@@ -424,7 +424,7 @@ void dpppsd::decode_hit(const caen::byte*& p) {
 
 }
 
-void dpppsd::decode_hit_waveform(const caen::byte*& p, hit_evt::wave_info_data& ed) {
+void dpppsd::decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& ed) {
 
 	using s_ed = hit_evt::wave_info_data;
 
@@ -680,7 +680,7 @@ struct dpppsd::stats::endpoint_impl {
 		: _logger{library_logger::create_logger("dpppsd_stats_ep"s)}
 		, _data{}
 		, _args_list{dpppsd::stats::default_data_format()}
-		, _sampling_period_ns{sampling_period_ns} {
+		, _to_ns{ [sampling_period_ns](time_info::type v) { return v * sampling_period_ns; } } {
 	}
 
 	void set_data_format(const std::string& json_format) {
@@ -699,7 +699,7 @@ struct dpppsd::stats::endpoint_impl {
 	std::shared_ptr<spdlog::logger> _logger;
 	data _data;
 	args_list_t _args_list;
-	const double _sampling_period_ns;
+	const std::function<double(time_info::type)> _to_ns;
 	std::mutex _mtx;
 
 };
@@ -753,7 +753,7 @@ void dpppsd::stats::read_data(timeout_t timeout, std::va_list* args) {
 	boost::ignore_unused(timeout);
 	// make a local copy to unlock the mutex as soon as possible.
 	const auto data = [this] {
-		std::lock_guard<std::mutex> l{_pimpl->_mtx};
+		std::lock_guard l{_pimpl->_mtx};
 		return _pimpl->_data;
 	}();
 
@@ -765,19 +765,19 @@ void dpppsd::stats::read_data(timeout_t timeout, std::va_list* args) {
 			utility::put_argument_array(args, type, data._real_time);
 			break;
 		case names::REAL_TIME_NS:
-			utility::put_argument_array(args, type, data._real_time | boost::adaptors::transformed([sp = _pimpl->_sampling_period_ns](auto v) { return v * sp; }));
+			utility::put_argument_array(args, type, data._real_time | boost::adaptors::transformed(_pimpl->_to_ns));
 			break;
 		case names::DEAD_TIME:
 			utility::put_argument_array(args, type, data._dead_time);
 			break;
 		case names::DEAD_TIME_NS:
-			utility::put_argument_array(args, type, data._dead_time | boost::adaptors::transformed([sp = _pimpl->_sampling_period_ns](auto v) { return v * sp; }));
+			utility::put_argument_array(args, type, data._dead_time | boost::adaptors::transformed(_pimpl->_to_ns));
 			break;
 		case names::LIVE_TIME:
 			utility::put_argument_array(args, type, data._live_time);
 			break;
 		case names::LIVE_TIME_NS:
-			utility::put_argument_array(args, type, data._live_time | boost::adaptors::transformed([sp = _pimpl->_sampling_period_ns](auto v) { return v * sp; }));
+			utility::put_argument_array(args, type, data._live_time | boost::adaptors::transformed(_pimpl->_to_ns));
 			break;
 		case names::TRIGGER_CNT:
 			utility::put_argument_array(args, type, data._trigger_cnt);
@@ -796,7 +796,7 @@ void dpppsd::stats::has_data(timeout_t timeout) {
 }
 
 void dpppsd::stats::clear_data() {
-	std::lock_guard<std::mutex> l{_pimpl->_mtx};
+	std::lock_guard l{_pimpl->_mtx};
 	auto& data = _pimpl->_data;
 	caen::set_default(data._real_time);
 	caen::set_default(data._dead_time);
@@ -805,8 +805,8 @@ void dpppsd::stats::clear_data() {
 	caen::set_default(data._saved_event_cnt);
 }
 
-void dpppsd::stats::update(std::size_t channel, time_info::type timestamp, caen::optional<time_info> time_info, caen::optional<counter_info> counter_info) {
-	std::lock_guard<std::mutex> l{ _pimpl->_mtx };
+void dpppsd::stats::update(std::size_t channel, time_info::type timestamp, std::optional<time_info> time_info, std::optional<counter_info> counter_info) {
+	std::lock_guard l{ _pimpl->_mtx };
 	auto& data = _pimpl->_data;
 	data._real_time[channel] = timestamp;
 	if (time_info) {

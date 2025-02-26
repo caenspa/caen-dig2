@@ -37,6 +37,7 @@
 #ifndef CAEN_INCLUDE_JSON_JSON_DATA_FORMAT_HPP_
 #define CAEN_INCLUDE_JSON_JSON_DATA_FORMAT_HPP_
 
+#include <string_view>
 #include <type_traits>
 
 #include <nlohmann/json.hpp>
@@ -49,7 +50,7 @@ namespace caen {
 
 namespace dig2 {
 
-using namespace caen::literals;
+using namespace std::literals;
 
 template <typename Endpoint>
 struct json_data_format {
@@ -85,20 +86,20 @@ struct json_data_format {
 	auto get_type() const noexcept { return _type; }
 	auto get_dim() const noexcept { return _dim; }
 
-	static constexpr auto& key_name() noexcept { return "name"; }
-	static constexpr auto& key_type() noexcept { return "type"; }
-	static constexpr auto& key_dim() noexcept { return "dim"; }
+	static inline constexpr auto key_name = "name"sv;
+	static inline constexpr auto key_type = "type"sv;
+	static inline constexpr auto key_dim = "dim"sv;
 
 	friend void from_json(const nlohmann::json& j, json_data_format& e) {
-		caen::json::get_if_not_null(j, key_name(), e._name);
-		caen::json::get_if_not_null(j, key_type(), e._type);
-		caen::json::get_if_not_null(j, key_dim(), e._dim);
+		caen::json::get_if_not_null(j, key_name, e._name);
+		caen::json::get_if_not_null(j, key_type, e._type);
+		caen::json::get_if_not_null(j, key_dim, e._dim);
 	}
 
 	friend void to_json(nlohmann::json& j, const json_data_format& e) {
-		caen::json::set(j, key_name(), e._name);
-		caen::json::set(j, key_type(), e._type);
-		caen::json::set(j, key_dim(), e._dim);
+		caen::json::set(j, key_name, e._name);
+		caen::json::set(j, key_type, e._type);
+		caen::json::set(j, key_dim, e._dim);
 	}
 
 private:

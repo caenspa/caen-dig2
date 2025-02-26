@@ -84,7 +84,7 @@ void events::clear_data() {
 void events::resize() {
 }
 
-void events::decode(const caen::byte* p, std::size_t size) {
+void events::decode(const std::byte* p, std::size_t size) {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + size;

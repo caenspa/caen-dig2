@@ -40,13 +40,13 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 
 #include <nlohmann/json.hpp>
 
 #include "cpp-utility/integer.hpp"
-#include "cpp-utility/optional.hpp"
 #include "cpp-utility/vector.hpp"
 #include "endpoints/aggregate_endpoint.hpp"
 #include "endpoints/dpp_probe_types.hpp"
@@ -95,7 +95,7 @@ struct dpppha final : public aggregate_endpoint {
 	~dpppha();
 
 	void resize() override;
-	void decode(const caen::byte* p, std::size_t size) override;
+	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
@@ -138,7 +138,7 @@ struct dpppha final : public aggregate_endpoint {
 		void has_data(timeout_t timeout) override;
 		void clear_data() override;
 
-		void update(std::size_t channel, time_info::type timestamp, caen::optional<time_info> time_info, caen::optional<counter_info> counter_info);
+		void update(std::size_t channel, time_info::type timestamp, std::optional<time_info> time_info, std::optional<counter_info> counter_info);
 
 		static args_list_t default_data_format();
 		static std::size_t data_format_dimension(names name);
@@ -154,22 +154,22 @@ private:
 	struct hit_evt {
 		struct s {
 			// 1st word
-			static constexpr std::size_t last_word{1}; // first bit of each word
-			static constexpr std::size_t channel{7};
-			static constexpr std::size_t special_event{1};
-			static constexpr std::size_t tbd_1{7};
-			static constexpr std::size_t timestamp{48};
-			static constexpr std::size_t timestamp_reduced{32};
+			static inline constexpr std::size_t last_word{1}; // first bit of each word
+			static inline constexpr std::size_t channel{7};
+			static inline constexpr std::size_t special_event{1};
+			static inline constexpr std::size_t tbd_1{7};
+			static inline constexpr std::size_t timestamp{48};
+			static inline constexpr std::size_t timestamp_reduced{32};
 			// 2nd word
-			static constexpr std::size_t has_waveform{1};
-			static constexpr std::size_t flag_low_priority{12};
-			static constexpr std::size_t flag_high_priority{8};
-			static constexpr std::size_t tbd_2{16};
-			static constexpr std::size_t fine_timestamp{10};
-			static constexpr std::size_t energy{16};
+			static inline constexpr std::size_t has_waveform{1};
+			static inline constexpr std::size_t flag_low_priority{12};
+			static inline constexpr std::size_t flag_high_priority{8};
+			static inline constexpr std::size_t tbd_2{16};
+			static inline constexpr std::size_t fine_timestamp{10};
+			static inline constexpr std::size_t energy{16};
 			// 3rd word
-			static constexpr std::size_t extra_type{3};
-			static constexpr std::size_t extra_data{60};
+			static inline constexpr std::size_t extra_type{3};
+			static inline constexpr std::size_t extra_data{60};
 		};
 		enum struct extra_type : caen::uint_t<s::extra_type>::fast {
 			wave_info								= 0b000,
@@ -180,9 +180,9 @@ private:
 			struct digital_probe {
 				struct s {
 					// part of 3rd word (extra)
-					static constexpr std::size_t type{4};
+					static inline constexpr std::size_t type{4};
 					// part of waveform word
-					static constexpr std::size_t sample{1};
+					static inline constexpr std::size_t sample{1};
 				};
 				enum struct type : caen::uint_t<s::type>::fast {
 					trigger							= 0b0000,
@@ -207,12 +207,14 @@ private:
 			struct analog_probe {
 				struct s {
 					// part of 3rd word (extra)
-					static constexpr std::size_t mul_factor{2};
-					static constexpr std::size_t is_signed{1};
-					static constexpr std::size_t type{3};
+					static inline constexpr std::size_t mul_factor{2};
+					static inline constexpr std::size_t is_signed{1};
+					static inline constexpr std::size_t type{3};
 					// part of waveform word
-					static constexpr std::size_t sample{14};
-					static constexpr std::size_t decoded_sample{sample + 4}; // 4 is factor_16
+					static inline constexpr std::size_t sample{14};
+					static inline constexpr std::size_t sample_16bit{16};
+					static inline constexpr std::size_t decoded_sample{sample + 4}; // 4 is factor_16
+					static inline constexpr std::size_t decoded_sample_16bit{sample_16bit + 4}; // 4 is factor_16
 				};
 				enum struct mul_factor : caen::uint_t<s::mul_factor>::fast {
 					factor_1						= 0b00,
@@ -226,29 +228,31 @@ private:
 					energy_filter					= 0b010,
 					energy_filter_baseline			= 0b011,
 					energy_filter_minus_baseline	= 0b100,
+					adc_input_16bit					= 0b101,
 				};
 				// fields
 				mul_factor _mul_factor;
 				bool _is_signed;
 				type _type;
 				dpp_analog_probe_type _decoded_type; // decoded common type
-				caen::vector<caen::uint_t<s::sample>::least> _data;
-				caen::vector<caen::int_t<s::decoded_sample>::least> _decoded_data;
+				caen::vector<caen::uint_t<s::sample_16bit>::least> _data; // large enough to store 16-bit probe
+				caen::vector<caen::int_t<s::decoded_sample_16bit>::least> _decoded_data; // large enough to store 16-bit probe
 				decltype(_decoded_data)::value_type _decoded_mul_factor;
 			};
 			struct s {
 				// 3rd word (extra), other fields described in analog_probe::s and digital_probe::s
-				static constexpr std::size_t tbd_1{14};
-				static constexpr std::size_t time_resolution{2};
-				static constexpr std::size_t trigger_thr{16};
+				static inline constexpr std::size_t tbd_1{14};
+				static inline constexpr std::size_t time_resolution{2};
+				static inline constexpr std::size_t trigger_thr{16};
 				// waveform size word
-				static constexpr std::size_t truncated{1};
-				static constexpr std::size_t tbd_2{51};
-				static constexpr std::size_t waveform_n_words{12};
+				static inline constexpr std::size_t truncated{1};
+				static inline constexpr std::size_t tbd_2{51};
+				static inline constexpr std::size_t waveform_n_words{12};
 				// waveform word
-				static constexpr std::size_t n_digital_probes{4};
-				static constexpr std::size_t n_analog_probes{2};
-				static constexpr std::size_t sample{n_analog_probes * analog_probe::s::sample + n_digital_probes * digital_probe::s::sample};
+				static inline constexpr std::size_t n_digital_probes{4};
+				static inline constexpr std::size_t n_analog_probes{2};
+				static inline constexpr std::size_t sample{n_analog_probes * analog_probe::s::sample + n_digital_probes * digital_probe::s::sample};
+				static inline constexpr std::size_t sample_16bit{analog_probe::s::sample_16bit};
 			};
 			enum struct time_resolution : caen::uint_t<s::time_resolution>::fast {
 				no_downsampling						= 0b00,
@@ -257,10 +261,12 @@ private:
 				downsampling_x8						= 0b11,
 			};
 			// constants
-			static constexpr extra_type extra_id{extra_type::wave_info};
-			static constexpr std::size_t samples_per_word{word_bit_size / s::sample};
-			static constexpr std::size_t max_waveform_words{4095};
-			static constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
+			static inline constexpr extra_type extra_id{extra_type::wave_info};
+			static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
+			static inline constexpr std::size_t samples_16bit_per_word{word_bit_size / s::sample_16bit};
+			static inline constexpr std::size_t max_waveform_words{4095};
+			static inline constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
+			static inline constexpr std::size_t max_waveform_samples_16bit{max_waveform_words * samples_16bit_per_word};
 			// fields
 			// - tbd_1 not saved into event
 			time_resolution _time_resolution;
@@ -273,23 +279,23 @@ private:
 		};
 		struct time_info_data {
 			struct s {
-				static constexpr std::size_t tbd_1{12};
-				static constexpr std::size_t dead_time{48};
+				static inline constexpr std::size_t tbd_1{12};
+				static inline constexpr std::size_t dead_time{48};
 			};
 			// constants
-			static constexpr extra_type extra_id{extra_type::time_info};
+			static inline constexpr extra_type extra_id{extra_type::time_info};
 			// fields
 			// - tbd_1 not saved into event
 			caen::uint_t<s::dead_time>::fast _dead_time;
 		};
 		struct counter_info_data {
 			struct s {
-				static constexpr std::size_t tbd_1{12};
-				static constexpr std::size_t trigger_cnt{24};
-				static constexpr std::size_t saved_event_cnt{24};
+				static inline constexpr std::size_t tbd_1{12};
+				static inline constexpr std::size_t trigger_cnt{24};
+				static inline constexpr std::size_t saved_event_cnt{24};
 			};
 			// constants
-			static constexpr extra_type extra_id{extra_type::counter_info};
+			static inline constexpr extra_type extra_id{extra_type::counter_info};
 			// fields
 			// - tbd_1 not saved into event
 			caen::uint_t<s::trigger_cnt>::fast _trigger_cnt;
@@ -323,8 +329,8 @@ private:
 	};
 
 	// decode internal implementation
-	void decode_hit(const caen::byte*& p);
-	void decode_hit_waveform(const caen::byte*& p, hit_evt::wave_info_data& ed);
+	void decode_hit(const std::byte*& p);
+	void decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& ed);
 
 	struct endpoint_impl; // forward declaration
 	std::unique_ptr<endpoint_impl> _pimpl;

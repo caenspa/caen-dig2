@@ -46,7 +46,7 @@ namespace caen {
  *
  * @sa https://stackoverflow.com/a/14637534/3287591
  */
-template<typename T>
+template <typename...>
 struct dependent_false : std::false_type {};
 
 } // namespace caen

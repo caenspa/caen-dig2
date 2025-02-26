@@ -51,7 +51,7 @@ namespace last_error {
 
 std::string& instance() noexcept(noexcept(std::string()));
 
-int _handle_exception(caen::string_view func) noexcept;
+int _handle_exception(std::string_view func) noexcept;
 
 } // namespace last_error
 

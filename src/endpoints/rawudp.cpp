@@ -40,6 +40,7 @@
 #include <exception>
 #include <list>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -47,7 +48,6 @@
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
 #include <boost/core/ignore_unused.hpp>
-#include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/algorithm/copy.hpp>
 
 #include <server_definitions.hpp>
@@ -58,7 +58,6 @@
 #include "cpp-utility/cpu.hpp"
 #include "cpp-utility/hash.hpp"
 #include "cpp-utility/is_in.hpp"
-#include "cpp-utility/optional.hpp"
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/span.hpp"
@@ -86,42 +85,6 @@ namespace ep {
 
 namespace {
 
-/*
- * Check if cast from size to container size type is narrowing and, if safe, resize
- *
- * The problem arises since expected size is always provided as std::uint64_t in the buffer
- * header, while container sizes are expressed in std::size_t that depends on the system
- * architecture, and could be narrower than std::uint64_t.
- * If a 64-bit size is larger than std::numeric_limits<std::size_t>::max(), than
- * a cast to std::size_t would be performed with a narrowing conversion, i.e. with a bit
- * truncation of some most significant non-zero bits.
- *
- * This is extremely unlikely, since buffers are allocated at arm_acquisition() at the
- * maximum data size that depends on the current configuration of the board. In case of too
- * large values, there should be errors in resize(), invoked by arm_acquisition(). This
- * failure would happen only if max data size related parameters are changed are after
- * disarm, but with data still to be read from the FPGA, and the new size become too large
- * to be stored in a std::size_t.
- *
- * Moreover, actually the max size allowed by a container is provided by max_size(),
- * that is usually equal to std::numeric_limits<std::ptrdiff_t>::max(), but this is checked
- * just later by caen::resize().
- *
- * Practically, this could be a problem only on 32-bit systems, where usually
- * caen::vector<caen::byte>::max_size() == 0x7fffffff. For a scope firmware, it would
- * need an event with 1'073'741'822 samples, for example 64 channels with 16'777'215
- * samples, but this configuration currently is not supported by any digitizer.
- */
-template <typename Container, typename StdIntT>
-void safe_increase_size(Container& buffer, StdIntT size) {
-	// 1. compute required size using standard integer common type
-	const auto required_size = buffer.size() + size;
-	// 2. try to cast to container size type, or throw if it overflows
-	const auto safe_required_size = boost::numeric_cast<typename Container::size_type>(required_size);
-	// 3.resize
-	caen::resize(buffer, safe_required_size);
-}
-
 } // unnamed namespace
 
 struct rawudp::endpoint_impl {
@@ -148,7 +111,7 @@ struct rawudp::endpoint_impl {
 		, _state{state::init}
 		, _clear_buffer{false}
 		, _send_stop{false}
-		, _last_valid_footer{caen::nullopt}
+		, _last_valid_footer{std::nullopt}
 		, _datagram_buffer(max_datagram_size)
 		, _hash_buffer(max_hash_size)
 		, _buffer()
@@ -160,8 +123,7 @@ struct rawudp::endpoint_impl {
 			throw "rawudp endpoint does not support IPv6"_ex;
 
 		// handle specific options
-		const auto& rcvbuf = client.get_url_data()._rcvbuf;
-		if (rcvbuf) {
+		if (auto&& rcvbuf = client.get_url_data()._rcvbuf; rcvbuf.has_value()) {
 			decltype(_socket)::receive_buffer_size option;
 			_socket.get_option(option);
 			const auto default_value = option.value();
@@ -181,7 +143,7 @@ struct rawudp::endpoint_impl {
 		// wait for digitizer to handle connect initialization
 		do {
 			// send empty packet to expose local port
-			const std::array<caen::byte, 0> arr{};
+			const std::array<std::byte, 0> arr{};
 			_socket.send(boost::asio::buffer(arr));
 			std::this_thread::sleep_for(10ms);
 		} while (client.get_value(0, "/par/registermisc", "0x8014") == "0"s);
@@ -201,61 +163,7 @@ struct rawudp::endpoint_impl {
 
 		if (wt::handler::get_instance().is_process_terminating()) {
 			/*
-			 * Usually this destructor is executed within a call to CAENDig2_Close. However, if CAENDig2_Close has
-			 * not been called before application main returned, this code is executed after DllMain called with
-			 * DLL_PROCESS_DETACH.
-			 *
-			 * From DllMain documentation:
-			 *
-			 * > When handling DLL_PROCESS_DETACH, a DLL should free resources such as heap memory only if the DLL is
-			 * > being unloaded dynamically (the lpReserved parameter is NULL). If the process is terminating (the
-			 * > lpvReserved parameter is non-NULL), all threads in the process except the current thread either have
-			 * > exited already or have been explicitly terminated by a call to the ExitProcess function, which might
-			 * > leave some process resources such as heaps in an inconsistent state. In this case, it is not safe
-			 * > for the DLL to clean up the resources.Instead, the DLL should allow the operating system to reclaim
-			 * > the memory.
-			 *
-			 * From ExitProcess documentation:
-			 *
-			 * > Exiting a process causes the following:
-			 * >
-			 * > - All of the threads in the process, except the calling thread, terminate their execution without
-			 * >     receiving a DLL_THREAD_DETACH notification.
-			 * > - The states of all of the threads terminated in step 1 become signaled.
-			 * > - The entry-point functions of all loaded dynamic-link libraries (DLLs) are called with
-			 * >     DLL_PROCESS_DETACH.
-			 * > - After all attached DLLs have executed any process termination code, the ExitProcess function
-			 * >     terminates the current process, including the calling thread.
-			 * > [...]
-			 * > Note that returning from the main function of an application results in a call to ExitProcess.
-			 *
-			 * In our case, we have see that this leaves _io_context and the two threads in a inconsistent state. For
-			 * example, the ~io_context() remains deadlocked in a call to GetQueuedCompletionStatus() because the
-			 * internal field outstanding_work_ has been left not zero.
-			 *
-			 * See:
-			 * - https://docs.microsoft.com/en-us/windows/win32/dlls/dllmain
-			 * - https://docs.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-best-practices
-			 * - https://docs.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-exitprocess
-			 *
-			 * See also:
-			 * - this bug report on Boost.ASIO: https://github.com/chriskohlhoff/asio/issues/869
-			 * - this StackOverflow question: https://stackoverflow.com/q/68318199/3287591
-			 *
-			 * First of all we print a critical message on the logger. Then, there are two possible workarounds:
-			 * - Force a return without proper cleanup, even if is not clear if it is safe to std::_Exit() from the
-			 *     library cleanup (i.e. just after DllMain), and if it changes the application main() return code
-			 *     (even if it seems it doesn't);
-			 * - Manually reset content of the boost::asio::io_context with a placement new that resets the status of
-			 *     the _io_context, as well as the content of the other instances related with threads and mutexes.
-			 *
-			 * The second solution seems preferable as it lets the library deinitialization to proceed correctly: in
-			 * std::_Exit case the DllMain of CAEN_FELib, typically unloaded after this DLL (even if there is no
-			 * guarantee about the order for libraries loaded with LoadLibrary, see this link for details
-			 * https://devblogs.microsoft.com/oldnewthing/20050523-05/?p=35573) is not reached, while it is reached
-			 * in the placement new case.
-			 *
-			 * Note that both solutions have memory leaks, but we don't care as here we are closing the library.
+			 * See comment on raw.cpp for details about this patch.
 			 */
 
 			_logger->warn("applying patch to make {} not block if invoked after ExitProcess", __func__);
@@ -478,19 +386,19 @@ private:
 
 	void set_state(state s) {
 		{
-			std::lock_guard<std::mutex> lk{_mtx_state};
+			std::lock_guard lk{_mtx_state};
 			_state = s;
 		}
 		_cv_state.notify_all();
 	}
 
 	void wait_state(state s) {
-		std::unique_lock<std::mutex> lk{_mtx_state};
+		std::unique_lock lk{_mtx_state};
 		_cv_state.wait(lk, [this, s] { return caen::is_in(_state, s); });
 	}
 
 	bool check_state(state s) {
-		std::lock_guard<std::mutex> lk{_mtx_state};
+		std::lock_guard lk{_mtx_state};
 		return (_state == s);
 	}
 
@@ -594,7 +502,7 @@ private:
 		SPDLOG_LOGGER_TRACE(_logger, "{}()", __func__);
 
 		// handle specific options
-		if (_receiver_thread_affinity) {
+		if (_receiver_thread_affinity.has_value()) {
 			const auto value = *_receiver_thread_affinity;
 			SPDLOG_LOGGER_DEBUG(_logger, "setting receiver thread affinity to {}", value);
 			caen::cpu::set_current_thread_affinity(value);
@@ -615,7 +523,7 @@ private:
 		std::terminate();
 	}
 
-	void decode_hash_buffer(const caen::span<caen::byte>& data) {
+	void decode_hash_buffer(const caen::span<std::byte>& data) {
 		BOOST_ASSERT_MSG(data.size() % sw_endpoint::word_size == 0, "invalid data size");
 		const auto n_words = data.size() / sw_endpoint::word_size;
 		caen::resize(_hash_buffer, 1 + n_words); // one slot for datagram id
@@ -627,6 +535,20 @@ private:
 		BOOST_ASSERT_MSG(it == _hash_buffer.end(), "inconsistent buffer decode for hash calculation");
 	}
 
+	/*
+	 * This custom hash serves two purposes:
+	 * - Mitigating issues described in RFC 4963.
+	 * - Verifying the datagram ID (included in the hash).
+	 *
+	 * If the check fails, it is likely due to a lost datagram (more probable) or an incorrectly assembled datagram (rare).
+	 * Since the datagram_id is not sent as a plain value but only as part of the hash, it is difficult to determine the
+	 * datagram_id of the received datagram (i.e., to know how many datagrams have been lost).
+	 * In any case, we must discard the packet as there is no way to recover the missing information. We reduce protocol
+	 * overhead by combining the datagram_id and the hash into a single 32-bit value.
+	 *
+	 * We could guess the datagram_id by performing a brute-force check: this is done to check for a reset by calling this
+	 * function with 0 as the first argument (see do_read).
+	 */
 	bool check_datagram_id(std::uint32_t expected_datagram_id, std::uint32_t expected_hash) {
 		_hash_buffer.front() = expected_datagram_id;
 		const auto hash = caen::hash::djb2a{}(_hash_buffer);
@@ -642,7 +564,7 @@ private:
 		// datagram cannot be larger than 65507 bytes and must contain at least the footer
 		BOOST_ASSERT_MSG(datagram_footer_size <= bytes_transferred && bytes_transferred <= _datagram_buffer.size(), "invalid bytes_transferred");
 
-		const auto datagram_buffer = caen::span<caen::byte>(_datagram_buffer.data(), bytes_transferred);
+		const auto datagram_buffer = caen::span<std::byte>(_datagram_buffer.data(), bytes_transferred);
 		auto footer_buffer_it = datagram_buffer.cend() - datagram_footer_size;
 		footer_data footer;
 		auto word = caen::serdes::deserialize<sw_endpoint::word_t>(footer_buffer_it);
@@ -670,7 +592,7 @@ private:
 		decltype(footer._datagram_id) expected_datagram_id;
 
 		// consistency check
-		if (BOOST_LIKELY(static_cast<bool>(_last_valid_footer))) { // static_cast requires by BOOST_LIKELY
+		if (BOOST_LIKELY(_last_valid_footer.has_value())) {
 			// standard case
 			const auto& lvf = *_last_valid_footer;
 			const auto expected_buffer_id = BOOST_UNLIKELY(lvf._last) ? caen::bit::mask_at<footer_data::s::buffer_id>(lvf._buffer_id + 1) : lvf._buffer_id;
@@ -726,7 +648,7 @@ private:
 		_last_valid_footer = footer;
 
 		{
-			std::unique_lock<std::mutex> lk{_mtx_state};
+			std::unique_lock lk{_mtx_state};
 
 			// data_size == 0 is a special firmware packed injected by the UDP block a second after the last data sent
 			if (data_size == 0) {
@@ -763,7 +685,7 @@ private:
 			const auto offset = data.size();
 
 			// resize (no allocation, unless user changed max data size related parameters after disarm with data still to be read)
-			safe_increase_size(data, datagram_data_buffer.size());
+			caen::safe_increase_size(data, datagram_data_buffer.size());
 
 			// read data from datagram
 			boost::copy(datagram_data_buffer, data.begin() + offset);
@@ -948,7 +870,7 @@ private:
 	// members
 
 	struct raw_data {
-		caen::vector<caen::byte> _data;
+		caen::vector<std::byte> _data;
 		std::uint16_t _buffer_id;
 		bool _flush;
 	};
@@ -965,7 +887,7 @@ private:
 	std::thread _receiver;
 	std::thread _decoder;
 
-	caen::optional<int> _receiver_thread_affinity;
+	std::optional<int> _receiver_thread_affinity;
 
 	state _state;
 	mutable std::mutex _mtx_state;
@@ -979,13 +901,13 @@ private:
 	struct footer_data {
 		struct s {
 			// 1st word
-			static constexpr std::size_t buffer_id{16};
-			static constexpr std::size_t tbd_1{1};
-			static constexpr std::size_t hash{32};
-			static constexpr std::size_t datagram_id{24}; // not part of the datagram!
-			static constexpr std::size_t aligned{1};
-			static constexpr std::size_t n_words{13};
-			static constexpr std::size_t last{1};
+			static inline constexpr std::size_t buffer_id{16};
+			static inline constexpr std::size_t tbd_1{1};
+			static inline constexpr std::size_t hash{32};
+			static inline constexpr std::size_t datagram_id{24}; // not part of the datagram!
+			static inline constexpr std::size_t aligned{1};
+			static inline constexpr std::size_t n_words{13};
+			static inline constexpr std::size_t last{1};
 		};
 		caen::uint_t<s::buffer_id>::fast _buffer_id;
 		// - tbd_1 not saved into struct
@@ -996,16 +918,16 @@ private:
 		caen::uint_t<s::last>::fast _last;
 	};
 
-	caen::optional<footer_data> _last_valid_footer;
+	std::optional<footer_data> _last_valid_footer;
 
-	static constexpr std::size_t datagram_footer_size{8};
-	static constexpr std::size_t max_datagram_size{65507}; // even if we should limit to 65504, aligned to a 64-bit word
-	caen::vector<caen::byte> _datagram_buffer;
+	static inline constexpr std::size_t datagram_footer_size{8};
+	static inline constexpr std::size_t max_datagram_size{65507}; // even if we should limit to 65504, aligned to a 64-bit word
+	caen::vector<std::byte> _datagram_buffer;
 
-	static constexpr std::size_t max_hash_size{max_datagram_size / sw_endpoint::word_size};
+	static inline constexpr std::size_t max_hash_size{max_datagram_size / sw_endpoint::word_size};
 	caen::vector<sw_endpoint::half_word_t> _hash_buffer;
 
-	static constexpr std::size_t circular_buffer_size{4};
+	static inline constexpr std::size_t circular_buffer_size{4};
 
 	caen::circular_buffer<raw_data, circular_buffer_size> _buffer;
 	args_list_t _args_list;

@@ -38,6 +38,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string_view>
 #include <utility>
 
 #include <boost/assert.hpp>
@@ -53,7 +54,6 @@
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "cpp-utility/to_address.hpp"
 #include "cpp-utility/to_underlying.hpp"
 #include "client.hpp"
@@ -62,7 +62,6 @@
 #include "library_logger.hpp"
 
 using namespace std::literals;
-using namespace caen::literals;
 
 namespace caen {
 
@@ -83,7 +82,7 @@ struct dppzle::endpoint_impl {
 		data_format_utils<dppzle>::parse_data_format(_args_list, json_format);
 	}
 
-	static constexpr std::size_t circular_buffer_size{4};
+	static inline constexpr std::size_t circular_buffer_size{4};
 
 	std::shared_ptr<spdlog::logger> _logger;
 	caen::circular_buffer<zle_evt, circular_buffer_size> _buffer;
@@ -128,7 +127,7 @@ void dppzle::resize() {
 
 		const auto is_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"_sv);
+			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
 		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::transformed(is_enabled);
@@ -145,8 +144,7 @@ void dppzle::resize() {
 			caen::reserve(evt._counters, zle_evt::max_n_counters);
 			for (auto&& c : boost::combine(evt._channel_data, ch_enabled_v)) {
 				auto& cd = c.get<0>();
-				const auto enabled = c.get<1>();
-				if (enabled) {
+				if (const auto enabled = c.get<1>(); enabled) {
 					caen::reserve(cd._chunk_time, zle_evt::max_n_counters / 2 + 1);
 					caen::reserve(cd._chunk_size, zle_evt::max_n_counters / 2 + 1);
 					caen::reserve(cd._chunk_begin, zle_evt::max_n_counters / 2 + 1);
@@ -170,7 +168,7 @@ void dppzle::resize() {
 	is_clear_required_and_reset();
 }
 
-void dppzle::decode(const caen::byte* p, std::size_t size) {
+void dppzle::decode(const std::byte* p, std::size_t size) {
 
 	const auto p_begin = p;
 	const auto p_end = p_begin + size;
@@ -198,7 +196,7 @@ void dppzle::decode(const caen::byte* p, std::size_t size) {
 	BOOST_ASSERT_MSG(p == p_end, "inconsistent decoding");
 }
 
-void dppzle::decode_hit(const caen::byte*& p) {
+void dppzle::decode_hit(const std::byte*& p) {
 
 	auto& buffer = _pimpl->_buffer;
 	auto& new_event = _pimpl->_new_event;
@@ -282,7 +280,7 @@ void dppzle::decode_hit(const caen::byte*& p) {
 		// additional counters words
 		caen::serdes::deserialize(p, word);
 
-		auto& counter_low = caen::emplace_back(evt._counters);
+		auto& counter_low = evt._counters.emplace_back();
 		counter_low._is_good = !even_counters_good; // low counters are odd (1st, 3rd, ...)
 		caen::bit::mask_and_right_shift<zle_evt::counter::s::size>(word, counter_low._size);
 		caen::bit::mask_and_right_shift<zle_evt::counter::s::counters_truncated>(word, counter_low._counters_truncated);
@@ -292,7 +290,7 @@ void dppzle::decode_hit(const caen::byte*& p) {
 		if (counter_low._last) {
 			caen::bit::right_shift<zle_evt::s::tbd_4>(word); // unused half word
 		} else {
-			auto& counter_high = caen::emplace_back(evt._counters);
+			auto& counter_high = evt._counters.emplace_back();
 			counter_high._is_good = even_counters_good; // high counters are even (2nd, 4th, ...)
 			caen::bit::mask_and_right_shift<zle_evt::counter::s::size>(word, counter_high._size);
 			caen::bit::mask_and_right_shift<zle_evt::counter::s::counters_truncated>(word, counter_high._counters_truncated);
@@ -384,7 +382,7 @@ void dppzle::decode_hit(const caen::byte*& p) {
 
 }
 
-void dppzle::decode_hit_waveform(const caen::byte*& p, zle_evt::channel_data::waveform_t& waveform) {
+void dppzle::decode_hit_waveform(const std::byte*& p, zle_evt::channel_data::waveform_t& waveform) {
 
 	word_t word;
 
@@ -417,7 +415,7 @@ void dppzle::decode_hit_waveform(const caen::byte*& p, zle_evt::channel_data::wa
 		 * (LLVM >= 12 and GCC >= 8) generate the same code of `std::memcpy` in
 		 * case of a little-endian system. MSVC does not optimize it, as of version 1933.
 		 */
-		if /* constexpr */ (caen::endian::native == caen::endian::little) {
+		if constexpr (caen::endian::native == caen::endian::little) {
 			std::memcpy(caen::to_address(it), &word, word_size);
 		} else {
 			for (auto i : caen::counting_range(zle_evt::samples_per_word))

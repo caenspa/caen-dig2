@@ -47,7 +47,6 @@
 #include <boost/config.hpp>
 #include <boost/predef/compiler.h>
 #include <boost/predef/other/workaround.h>
-#include <boost/static_assert.hpp>
 
 #include "cpp-utility/bit.hpp"
 #include "cpp-utility/integer.hpp"
@@ -67,7 +66,7 @@ struct lib {
 
 private:
 
-	static constexpr auto client_array_size = std::tuple_size<global::client_array_type>::value;
+	static inline constexpr auto client_array_size = std::tuple_size<global::client_array_type>::value;
 
 	// compile time error if max BoardT is smaller than array size (no check_board_index is defined in that case)
 
@@ -162,7 +161,7 @@ constexpr bool test_handle() noexcept {
 	return ret;
 }
 
-BOOST_STATIC_ASSERT(test_handle());
+static_assert(test_handle());
 
 } // namespace sanity_checks
 

@@ -37,13 +37,13 @@
 #include "CAENDig2.h"
 
 #include <algorithm>
+#include <string_view>
 
 #include <boost/config.hpp>
 #include <boost/predef/os.h>
 
 #include "cpp-utility/is_in.hpp"
 #include "cpp-utility/string.hpp"
-#include "cpp-utility/string_view.hpp"
 #include "api.hpp"
 #include "last_error.hpp"
 #include "lib_error.hpp"
@@ -125,7 +125,7 @@ int CAEN_FELIB_API CAENDig2_GetDeviceTree(uint32_t handle, char* jsonString, siz
 	if (caen::is_in(nullptr, jsonString) && size != 0)
 		throw lib::ex::invalid_argument("null and size != 0");
 	const auto res = lib::get_device_tree(handle);
-	const auto res_safe = caen::string_view(res).substr(0, size - 1);
+	const auto res_safe = std::string_view(res).substr(0, size - 1);
 	caen::string::string_to_pointer_safe(jsonString, res_safe, size);
 	return static_cast<int>(res.size());
 }

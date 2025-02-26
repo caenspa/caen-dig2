@@ -52,29 +52,29 @@ namespace dig2 {
 
 namespace handle {
 
-static constexpr std::size_t server_handle_bits{cmd::handle_bits}; // from json_common.hpp
+inline constexpr std::size_t server_handle_bits{cmd::handle_bits}; // from json_common.hpp
 
 using client_handle_t = cmd::handle_t;
 using internal_handle_t = caen::uint_t<server_handle_bits>::fast;
 
-static constexpr std::size_t board_bits{caen::bit::bit_size<client_handle_t>::value - server_handle_bits};
-static constexpr internal_handle_t invalid_server_handle{cmd::max_handle};
+inline constexpr std::size_t board_bits{caen::bit::bit_size<client_handle_t>::value - server_handle_bits};
+inline constexpr internal_handle_t invalid_server_handle{cmd::max_handle};
 
 } // namespace handle
 
 namespace max_size {
 
-static constexpr std::size_t devices{1 << handle::board_bits};
+inline constexpr std::size_t devices{1 << handle::board_bits};
 
 namespace str {
 
-static constexpr std::size_t version{16};
-static constexpr std::size_t error_name{32};
-static constexpr std::size_t error_description{256};
-static constexpr std::size_t last_error_description{1024};
-static constexpr std::size_t node_name{32};
-static constexpr std::size_t value{256};
-static constexpr std::size_t path{256};
+inline constexpr std::size_t version{16};
+inline constexpr std::size_t error_name{32};
+inline constexpr std::size_t error_description{256};
+inline constexpr std::size_t last_error_description{1024};
+inline constexpr std::size_t node_name{32};
+inline constexpr std::size_t value{256};
+inline constexpr std::size_t path{256};
 
 } // namespace str
 

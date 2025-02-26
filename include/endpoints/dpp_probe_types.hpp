@@ -47,6 +47,7 @@ namespace ep {
 
 enum struct dpp_digital_probe_type : std::uint8_t {
 	unknown							= 0xff,
+	none							= 0xfe,
 	// common (PHA firmware values)
 	trigger							= 0b00000,
 	time_filter_armed				= 0b00001,
@@ -74,8 +75,10 @@ enum struct dpp_digital_probe_type : std::uint8_t {
 
 enum struct dpp_analog_probe_type : std::uint8_t {
 	unknown							= 0xff,
+	none							= 0xfe,
 	// common (PHA firmware values)
 	adc_input						= 0b0000,
+	adc_input_16bit					= 0b0101,
 	// PHA specific (PHA firmware values)
 	time_filter						= 0b0001,
 	energy_filter					= 0b0010,

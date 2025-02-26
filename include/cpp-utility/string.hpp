@@ -48,6 +48,7 @@
 
 #include <boost/algorithm/string.hpp>
 #include <boost/assert.hpp>
+#include <boost/range/adaptor/indexed.hpp>
 #include <boost/static_assert.hpp>
 
 #include "counting_range.hpp"
@@ -333,7 +334,7 @@ decltype(auto) remove_spaces(String&& value) {
 }
 
 /**
- * @brief Remove space characters from string
+ * @brief Split a string into a container of strings using a set of delimiters.
  *
  * @tparam String		input string type
  * @tparam Range		range type
@@ -377,11 +378,39 @@ String pointer_to_string_safe(const Char* src, typename String::size_type max_si
 	return detail::pointer_to_string_safe<Char, String>(src, max_size);
 }
 
+template <typename Char, typename String = std::basic_string<Char>>
+std::vector<String> pointer_to_string_vector_safe(const Char* const* src, std::size_t vector_size, typename String::size_type max_size) {
+	BOOST_STATIC_ASSERT(std::is_same<Char, typename String::value_type>::value);
+	std::vector<String> res{};
+	for (auto&& i : caen::counting_range(vector_size))
+		res.push_back(detail::pointer_to_string_safe<Char, String>(src[i], max_size));
+	return res;
+}
+
+template <typename Char, std::size_t N, typename String = std::basic_string<Char>>
+std::vector<String> pointer_to_string_vector_safe(const Char (*src)[N], std::size_t vector_size, typename String::size_type max_size) {
+	BOOST_STATIC_ASSERT(std::is_same<Char, typename String::value_type>::value);
+	BOOST_ASSERT_MSG(N == max_size, "invalid size");
+	std::vector<String> res{};
+	for (auto&& i : caen::counting_range(vector_size))
+		res.push_back(detail::pointer_to_string_safe<Char, String>(src[i], max_size));
+	return res;
+}
+
 template <typename Char, typename String>
 void string_to_pointer_safe(Char* dst, const String& src, typename String::size_type max_size) {
 	BOOST_STATIC_ASSERT(std::is_same<Char, typename String::value_type>::value);
 	detail::string_to_pointer_safe<Char, String>(dst, src, max_size);
 }
+
+template <typename Char, std::size_t N, typename String>
+void string_vector_to_pointer_safe(Char(*dst)[N], const std::vector<String>& src, typename String::size_type max_size) {
+	BOOST_STATIC_ASSERT(std::is_same<Char, typename String::value_type>::value);
+	BOOST_ASSERT_MSG(N == max_size, "invalid size");
+	for (auto&& s : src | boost::adaptors::indexed())
+		detail::string_to_pointer_safe<Char, String>(dst[s.index()], s.value(), max_size);
+}
+
 
 /**
  * @brief Split a string like "0x10=24" in (0x10, 24)

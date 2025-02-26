@@ -38,12 +38,11 @@
 #define CAEN_INCLUDE_LIBRARY_LOGGER_HPP_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/ostr.h> // required to print custom objects
-
-#include "cpp-utility/optional.hpp"
 
 namespace caen {
 
@@ -69,7 +68,7 @@ std::shared_ptr<spdlog::logger> create_logger(const std::string& name);
  * @param level		optional logger level to override default level
  * @return a new logger instance
  */
-std::shared_ptr<spdlog::logger> create_logger(const std::string& name, const caen::optional<spdlog::level::level_enum>& level);
+std::shared_ptr<spdlog::logger> create_logger(const std::string& name, const std::optional<spdlog::level::level_enum>& level);
 
 } // namespace library_logger
 

@@ -34,6 +34,7 @@ libCAEN_Dig2_la_SOURCES = \
 	endpoints/dpppsd.cpp \
 	endpoints/dppzle.cpp \
 	endpoints/events.cpp \
+	endpoints/opendata.cpp \
 	endpoints/opendpp.cpp \
 	endpoints/raw.cpp \
 	endpoints/rawudp.cpp \
