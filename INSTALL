@@ -21,7 +21,7 @@ Prerequisites
 - CAEN FELib >= 1.3.0
 - Boost C++ libraries (headers only, see build instructions).
   The following Boost versions have been tested on x86_64:
-  - 1.67, 1.74, 1.83
+  - 1.67, 1.74, 1.83, 1.87
 
 *) versions >= 16 require Boost >= 1.81
 

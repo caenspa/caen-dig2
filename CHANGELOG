@@ -11,6 +11,18 @@
 -----------------------------------------------------------------------------
 
 
+v1.7.1 (05/05/2025)
+-------------------
+
+New features:
+- Windows build environment updated: MSVC2019 16.11.44 and Boost 1.87.
+- Add build tests for Clang 20.
+- spdlog to 1.15.2.
+
+Fixes:
+- Fix components handling for Windows installer.
+
+
 v1.7.0 (25/02/2025)
 -------------------
 
@@ -21,6 +33,7 @@ New features:
 - Add support for INFO field on Open DPP endpoint, a 7-bit unsigned integer
     at bits [48:54] of the first event word.
 - Add build tests for Clang 19 and for Boost 1.87.
+- spdlog to 1.15.0.
 
 Fixes:
 - Fix build with Boost 1.87.

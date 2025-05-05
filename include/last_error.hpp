@@ -38,10 +38,9 @@
 #define CAEN_INCLUDE_LAST_ERROR_HPP_
 
 #include <string>
+#include <string_view>
 
 #include <boost/current_function.hpp>
-
-#include "cpp-utility/string_view.hpp"
 
 namespace caen {
 

@@ -267,7 +267,8 @@ SPDLOG_INLINE int utc_minutes_offset(const std::tm &tm) {
 
     #if defined(sun) || defined(__sun) || defined(_AIX) || \
         (defined(__NEWLIB__) && !defined(__TM_GMTOFF)) ||  \
-        (!defined(_BSD_SOURCE) && !defined(_GNU_SOURCE))
+        (!defined(__APPLE__) && !defined(_BSD_SOURCE) && !defined(_GNU_SOURCE) && \
+            (!defined(_POSIX_VERSION) || (_POSIX_VERSION < 202405L)))
     // 'tm_gmtoff' field is BSD extension and it's missing on SunOS/Solaris
     struct helper {
         static long int calculate_gmt_offset(const std::tm &localtm = details::os::localtime(),
@@ -587,6 +588,18 @@ SPDLOG_INLINE bool fsync(FILE *fp) {
 #else
     return ::fsync(fileno(fp)) == 0;
 #endif
+}
+
+// Do non-locking fwrite if possible by the os or use the regular locking fwrite
+// Return true on success.
+SPDLOG_INLINE bool fwrite_bytes(const void *ptr, const size_t n_bytes, FILE *fp) {
+    #if defined(_WIN32) && defined(SPDLOG_FWRITE_UNLOCKED)
+    return _fwrite_nolock(ptr, 1, n_bytes, fp) == n_bytes;
+    #elif defined(SPDLOG_FWRITE_UNLOCKED)
+    return ::fwrite_unlocked(ptr, 1, n_bytes, fp) == n_bytes;
+    #else
+    return std::fwrite(ptr, 1, n_bytes, fp) == n_bytes;
+    #endif
 }
 
 }  // namespace os

@@ -34,7 +34,7 @@ AM_PROG_AR
 # Requires constructor to be invoked at startup, cannot be used as static
 LT_INIT([disable-static])
 
-# Set langage to C++
+# Set language to C++
 AC_PROG_CXX
 AC_LANG([C++])
 
