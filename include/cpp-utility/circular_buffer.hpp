@@ -194,7 +194,7 @@ public:
 		auto condition = [this] { return valid_and_not_empty(); };
 		// call wait_for only if the condition is not satisfied and the timeout is not zero,
 		// to avoid overheads of transforming wait_for into wait_until
-		if (!condition() && timeout != decltype(timeout)::zero() && !_cv.wait_for(lk, timeout, condition))
+		if (!condition() && (timeout == decltype(timeout)::zero() || !_cv.wait_for(lk, timeout, condition)))
 			return nullptr;
 		ss.release();
 		_read_halt = false;

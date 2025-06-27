@@ -11,6 +11,14 @@
 -----------------------------------------------------------------------------
 
 
+v1.8.1 (17/06/2025)
+-------------------
+
+Fixes:
+- Fixed an issue in CAEN_FELib_ReadData where a zero timeout always returned
+    success, caused by a regression introduced in v1.7.2.
+
+
 v1.8.0 (16/06/2025)
 -------------------
 

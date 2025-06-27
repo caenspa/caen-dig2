@@ -49,6 +49,7 @@
 #include <boost/asio.hpp>
 #include <boost/assert.hpp>
 #include <boost/config.hpp>
+#include <boost/numeric/conversion/cast.hpp>
 #include <boost/predef/os.h>
 #include <boost/range/adaptor/filtered.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -608,8 +609,11 @@ private:
 
 		SPDLOG_LOGGER_DEBUG(_logger, "reply received (size={})", size);
 
+		// check size and throw exception if overflow (should apply only for 32-bit builds)
+		const auto required_size = boost::numeric_cast<std::size_t>(size);
+
 		// read data
-		boost::asio::streambuf reply_buffer(size);
+		boost::asio::streambuf reply_buffer(required_size);
 		boost::asio::read(_socket, reply_buffer);
 
 		lk.unlock();

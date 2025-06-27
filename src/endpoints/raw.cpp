@@ -632,7 +632,7 @@ private:
 
 		// read data from network
 		boost::system::error_code ec;
-		const auto reply_length = boost::asio::read(_socket, read_buffer, ec);
+		[[maybe_unused]] const auto reply_length = boost::asio::read(_socket, read_buffer, ec);
 		if (ec) {
 			_logger->error("data read failed: {}", ec.message());
 			return;
