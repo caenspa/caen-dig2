@@ -55,6 +55,32 @@ AS_IF(
 	AX_CXX_COMPILE_STDCXX([20], [noext], [optional])
 ])
 
+# Check if std::filesystem requires -lstdc++fs (see https://en.cppreference.com/w/cpp/filesystem.html)
+AC_MSG_CHECKING([for std::filesystem support])
+saved_LIBS=$LIBS
+AC_LINK_IFELSE([
+	AC_LANG_PROGRAM([[#include <filesystem>]], [[std::filesystem::path p = "test";]])
+], [
+	AC_MSG_RESULT([yes])
+], [
+	LIBS="$saved_LIBS -lstdc++fs"
+	AC_LINK_IFELSE([
+		AC_LANG_PROGRAM([[#include <filesystem>]], [[std::filesystem::path p = "test";]])
+	], [
+		AC_MSG_RESULT([yes, with -lstdc++fs])
+	], [
+		LIBS="$saved_LIBS -lc++fs"
+		AC_LINK_IFELSE([
+			AC_LANG_PROGRAM([[#include <filesystem>]], [[std::filesystem::path p = "test";]])
+		], [
+			AC_MSG_RESULT([yes, with -lc++fs])
+		], [
+			AC_MSG_RESULT([no])
+			AC_MSG_ERROR([std::filesystem support is required but not available])
+		])
+	])
+])
+
 # If available, use -fvisibility=hidden to hide internal names
 AX_APPEND_COMPILE_FLAGS([-fvisibility=hidden])
 

@@ -16,8 +16,8 @@ Prerequisites
 
 - A compiler supporting C++17 or C++20.
   The following compiler versions have been tested on x86_64:
-  - GCC >= 7 (up to version 14)
-  - clang >= 5 (up to version 19*)
+  - GCC >= 8 (up to version 15)
+  - clang >= 5 (up to version 20*)
 - CAEN FELib >= 1.3.0
 - Boost C++ libraries (headers only, see build instructions).
   The following Boost versions have been tested on x86_64:

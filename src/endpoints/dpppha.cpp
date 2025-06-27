@@ -134,25 +134,30 @@ void dpppha::resize() {
 		auto& client = get_client();
 		const auto n_channels = client.get_n_channels();
 
-		// chenable and wavetriggersource can be set in run: in case, memory could be allocated by caen::resize during run
+		// chenable, wavetriggersource and waveanalogprobe0 can be set in run:
+		// in case, memory would be allocated by caen::resize during run with little
+		// performance penalty
 
-		const auto is_enabled = [&client](auto i) {
+		const auto is_wave_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"sv);
-		};
-
-		const auto is_wave_trg_enabled = [&client](auto i) {
+			if (caen::string::iequals(enabled_s, "false"sv))
+				return false;
 			const auto wavetriggersource_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/wavetriggersource", i));
 			return !caen::string::iequals(wavetriggersource_s, "disabled"sv);
 		};
 
 		const auto get_record_length = [&client](auto i) {
+			const auto wave_analog_probe_0_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/waveanalogprobe0", i));
+			const auto is_adc_input_16 = caen::string::iequals(wave_analog_probe_0_s, "adcinput16"sv);
 			const auto ch_record_length_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chrecordlengths", i));
-			return caen::lexical_cast<std::size_t>(ch_record_length_s);
+			auto ch_record_length = caen::lexical_cast<std::size_t>(ch_record_length_s);
+			if (is_adc_input_16)
+				ch_record_length *= 2;
+			return ch_record_length;
 		};
 
 		namespace ba = boost::adaptors;
-		const auto ch_record_length = caen::counting_range(n_channels) | ba::filtered(is_enabled) | ba::filtered(is_wave_trg_enabled) | ba::transformed(get_record_length);
+		const auto ch_record_length = caen::counting_range(n_channels) | ba::filtered(is_wave_enabled) | ba::transformed(get_record_length);
 
 		// store values in a container to avoid call get_value twice per each boost::max_element cycle
 		const caen::vector<std::size_t> ch_record_length_v(ch_record_length.begin(), ch_record_length.end());
@@ -395,7 +400,7 @@ void dpppha::decode_hit(const std::byte*& p) {
 				break;
 			}
 			default:
-				_pimpl->_logger->warn("unsupported event id {:d}", caen::to_underlying(extra_type));
+				_pimpl->_logger->warn("unsupported event id {}", caen::to_underlying(extra_type));
 				break;
 			}
 		}
@@ -492,7 +497,7 @@ void dpppha::decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& e
 		// numeric cast throws if result overflows size_t
 		const auto n_samples = boost::numeric_cast<std::size_t>(waveform_n_words * s_ed::samples_per_word);
 
-		// resize (no allocation)
+		// resize probes (no allocation)
 		apply_all_probes(ed, [n_samples](auto& data) { caen::resize(data, n_samples); });
 
 		for (auto w : caen::counting_range(waveform_n_words)) {
@@ -809,23 +814,24 @@ void dpppha::stats::read_data(timeout_t timeout, std::va_list* args) {
 		const auto name = std::get<0>(arg);
 		const auto type = std::get<1>(arg);
 		switch (name) {
+			namespace ba = boost::adaptors;
 		case names::REAL_TIME:
 			utility::put_argument_array(args, type, data._real_time);
 			break;
 		case names::REAL_TIME_NS:
-			utility::put_argument_array(args, type, data._real_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._real_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::DEAD_TIME:
 			utility::put_argument_array(args, type, data._dead_time);
 			break;
 		case names::DEAD_TIME_NS:
-			utility::put_argument_array(args, type, data._dead_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._dead_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::LIVE_TIME:
 			utility::put_argument_array(args, type, data._live_time);
 			break;
 		case names::LIVE_TIME_NS:
-			utility::put_argument_array(args, type, data._live_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._live_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::TRIGGER_CNT:
 			utility::put_argument_array(args, type, data._trigger_cnt);

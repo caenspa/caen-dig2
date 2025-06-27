@@ -102,7 +102,6 @@ constexpr bool is_in(const T& value, const Args&... args) noexcept {
 	return ((value == args) || ...);
 }
 
-
 /**
  * @brief Check if a variable is equal to all variables in a given set.
  *

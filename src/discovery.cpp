@@ -55,6 +55,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/fmt/ostr.h>
 
 #if BOOST_OS_WINDOWS
 #else
@@ -71,15 +72,9 @@
 #include "lib_error.hpp"
 #include "library_logger.hpp"
 
-#if SPDLOG_VERSION >= 11400
-/*
- * fmt >= 10 requires explicix template specialization to use ostream formatter
- */
-#include <spdlog/fmt/bundled/ostream.h>
-
+// fmt >= 10 requires explicix template specialization to use ostream formatter
 template <> struct fmt::formatter<boost::asio::ip::udp::endpoint> : ostream_formatter {};
 template <> struct fmt::formatter<std::ssub_match> : ostream_formatter {};
-#endif
 
 using namespace std::literals;
 

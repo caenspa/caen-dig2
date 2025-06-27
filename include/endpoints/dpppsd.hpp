@@ -212,7 +212,9 @@ private:
 					static inline constexpr std::size_t type{3};
 					// part of waveform word
 					static inline constexpr std::size_t sample{14};
+					static inline constexpr std::size_t sample_16bit{16};
 					static inline constexpr std::size_t decoded_sample{sample + 4}; // 4 is factor_16
+					static inline constexpr std::size_t decoded_sample_16bit{sample_16bit + 4}; // 4 is factor_16
 				};
 				enum struct mul_factor : caen::uint_t<s::mul_factor>::fast {
 					factor_1						= 0b00,
@@ -224,14 +226,15 @@ private:
 					adc_input						= 0b000,
 					baseline						= 0b001,
 					cfd								= 0b010,
+					adc_input_16bit					= 0b101,
 				};
 				// fields
 				mul_factor _mul_factor;
 				bool _is_signed;
 				type _type;
 				dpp_analog_probe_type _decoded_type; // decoded common type
-				caen::vector<caen::uint_t<s::sample>::least> _data;
-				caen::vector<caen::int_t<s::decoded_sample>::least> _decoded_data;
+				caen::vector<caen::uint_t<s::sample_16bit>::least> _data; // large enough to store 16-bit probe
+				caen::vector<caen::int_t<s::decoded_sample_16bit>::least> _decoded_data; // large enough to store 16-bit probe
 				decltype(_decoded_data)::value_type _decoded_mul_factor;
 			};
 			struct s {
@@ -247,6 +250,7 @@ private:
 				static inline constexpr std::size_t n_digital_probes{4};
 				static inline constexpr std::size_t n_analog_probes{2};
 				static inline constexpr std::size_t sample{n_analog_probes * analog_probe::s::sample + n_digital_probes * digital_probe::s::sample};
+				static inline constexpr std::size_t sample_16bit{analog_probe::s::sample_16bit};
 			};
 			enum struct time_resolution : caen::uint_t<s::time_resolution>::fast {
 				no_downsampling						= 0b00,
@@ -257,8 +261,10 @@ private:
 			// constants
 			static inline constexpr extra_type extra_id{extra_type::wave_info};
 			static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
+			static inline constexpr std::size_t samples_16bit_per_word{word_bit_size / s::sample_16bit};
 			static inline constexpr std::size_t max_waveform_words{4095};
 			static inline constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
+			static inline constexpr std::size_t max_waveform_samples_16bit{max_waveform_words * samples_16bit_per_word};
 			// fields
 			// - tbd_1 not saved into event
 			time_resolution _time_resolution;

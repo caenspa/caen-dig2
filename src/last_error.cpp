@@ -42,9 +42,6 @@
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
-#if __cplusplus < 201703L
-#include <spdlog/fmt/bundled/ostream.h> // required to use fmt on boost::string_view in C++14
-#endif
 
 #include <CAEN_FELib.h>
 

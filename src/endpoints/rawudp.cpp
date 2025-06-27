@@ -38,6 +38,8 @@
 
 #include <condition_variable>
 #include <exception>
+#include <filesystem>
+#include <fstream>
 #include <list>
 #include <mutex>
 #include <optional>
@@ -49,6 +51,7 @@
 #include <boost/config.hpp>
 #include <boost/core/ignore_unused.hpp>
 #include <boost/range/algorithm/copy.hpp>
+#include <spdlog/fmt/ostr.h>
 
 #include <server_definitions.hpp>
 
@@ -57,6 +60,7 @@
 #include "cpp-utility/counting_range.hpp"
 #include "cpp-utility/cpu.hpp"
 #include "cpp-utility/hash.hpp"
+#include "cpp-utility/integer.hpp"
 #include "cpp-utility/is_in.hpp"
 #include "cpp-utility/scope_exit.hpp"
 #include "cpp-utility/serdes.hpp"
@@ -74,6 +78,8 @@
 #if BOOST_OS_WINDOWS
 #include "cpp-utility/win32_process_terminate.hpp"
 #endif
+
+template <> struct fmt::formatter<std::filesystem::path> : ostream_formatter {};
 
 using namespace std::literals;
 
@@ -128,10 +134,18 @@ struct rawudp::endpoint_impl {
 			_socket.get_option(option);
 			const auto default_value = option.value();
 			const auto new_value = *rcvbuf;
-			SPDLOG_LOGGER_DEBUG(_logger, "overwriting socket default receive_buffer_size (default_value={}, new_value={})", default_value, new_value);
-			boost::ignore_unused(default_value);
+			_logger->info("overwriting socket default receive_buffer_size (default_value={}, new_value={})", default_value, new_value);
 			option = new_value;
 			_socket.set_option(option);
+		}
+
+		if (auto&& dump_path = client.get_url_data()._dump_path; dump_path.has_value()) {
+			// open file for writing
+			const auto absolute_path = std::filesystem::absolute(*dump_path);
+			_dump_file.open(absolute_path, std::ios::out | std::ios::binary);
+			if (!_dump_file.is_open())
+				throw ex::runtime_error(fmt::format("cannot open dump file: {}", absolute_path));
+			_logger->info("dump file opened: {}", absolute_path);
 		}
 
 		// connect
@@ -504,7 +518,7 @@ private:
 		// handle specific options
 		if (_receiver_thread_affinity.has_value()) {
 			const auto value = *_receiver_thread_affinity;
-			SPDLOG_LOGGER_DEBUG(_logger, "setting receiver thread affinity to {}", value);
+			_logger->info("setting receiver thread affinity to {}", value);
 			caen::cpu::set_current_thread_affinity(value);
 		}
 
@@ -595,10 +609,10 @@ private:
 		if (BOOST_LIKELY(_last_valid_footer.has_value())) {
 			// standard case
 			const auto& lvf = *_last_valid_footer;
-			const auto expected_buffer_id = BOOST_UNLIKELY(lvf._last) ? caen::bit::mask_at<footer_data::s::buffer_id>(lvf._buffer_id + 1) : lvf._buffer_id;
+			const auto expected_buffer_id = BOOST_UNLIKELY(lvf._last) ? caen::bit::mask_at<footer_data::s::buffer_id>(lvf._buffer_id + 1U) : lvf._buffer_id;
 			if (BOOST_LIKELY(footer._buffer_id == expected_buffer_id)) {
 				// standard case
-				expected_datagram_id = BOOST_UNLIKELY(lvf._last) ? 0 : caen::bit::mask_at<footer_data::s::datagram_id>(lvf._datagram_id + 1);
+				expected_datagram_id = BOOST_UNLIKELY(lvf._last) ? 0 : caen::bit::mask_at<footer_data::s::datagram_id>(lvf._datagram_id + 1U);
 			} else {
 				// datagram of the previous buffer lost
 				SPDLOG_LOGGER_DEBUG(_logger, "last datagrams of previous buffer have been lost (buffer_id={}, expected_buffer_id={})", footer._buffer_id, expected_buffer_id);
@@ -710,7 +724,7 @@ private:
 			SPDLOG_LOGGER_DEBUG(_logger, "buffer completed (size={})", data.size());
 
 			// fill auxiliary data
-			bw->_buffer_id = footer._buffer_id;
+			bw->_buffer_id = static_cast<std::uint16_t>(footer._buffer_id);
 			bw->_flush = flush;
 
 			se_abort.release();
@@ -823,8 +837,10 @@ private:
 
 			const std::size_t evt_size{evt._n_words * sw_endpoint::word_size};
 
-			if (BOOST_UNLIKELY(evt_size > size_left))
+			if (BOOST_UNLIKELY(evt_size > size_left)) {
+				dump_data(data.data(), data.size());
 				throw ex::runtime_error(fmt::format("inconsistent event size (evt_size={}, size_left={})", evt_size, size_left));
+			}
 
 			SPDLOG_LOGGER_DEBUG(_logger, "decoder: start decoding (type={:#x}, n_words={})", caen::to_underlying(evt._format), evt._n_words);
 
@@ -867,6 +883,14 @@ private:
 		}
 	}
 
+	void dump_data(const std::byte* data, std::size_t size) {
+		if (!_dump_file.is_open())
+			return;
+		const auto data_written = _dump_file.sputn(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+		_dump_file.pubsync();
+		_logger->info("dumped {} bytes to file", data_written);
+	}
+
 	// members
 
 	struct raw_data {
@@ -895,6 +919,8 @@ private:
 
 	bool _clear_buffer;
 	bool _send_stop;
+
+	std::filebuf _dump_file;
 
 	std::list<std::shared_ptr<sw_endpoint>> _sw_ep_list;
 

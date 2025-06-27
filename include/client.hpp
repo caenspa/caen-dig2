@@ -38,6 +38,7 @@
 #define CAEN_INCLUDE_CLIENT_HPP_
 
 #include <cstdarg>
+#include <filesystem>
 #include <list>
 #include <memory>
 #include <optional>
@@ -74,6 +75,7 @@ struct url_data {
 	std::optional<int> _keepalive;
 	std::optional<int> _rcvbuf;
 	std::optional<int> _receiver_thread_affinity;
+	std::optional<std::filesystem::path> _dump_path;
 
 };
 

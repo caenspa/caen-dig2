@@ -116,7 +116,8 @@ void opendpp::resize() {
 			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
-		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::filtered(is_enabled);
+		namespace ba = boost::adaptors;
+		const auto ch_enabled = caen::counting_range(n_channels) | ba::filtered(is_enabled);
 
 		const auto is_any_ch_enabled = !ch_enabled.empty();
 

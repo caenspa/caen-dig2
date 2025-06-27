@@ -167,7 +167,7 @@ private:
 			static inline constexpr std::size_t tbd_2{16};
 			static inline constexpr std::size_t fine_timestamp{10};
 			static inline constexpr std::size_t energy{16};
-			// 3rd word
+			// 3rd word (extra)
 			static inline constexpr std::size_t extra_type{3};
 			static inline constexpr std::size_t extra_data{60};
 		};
@@ -279,6 +279,7 @@ private:
 		};
 		struct time_info_data {
 			struct s {
+				// 3rd word (extra)
 				static inline constexpr std::size_t tbd_1{12};
 				static inline constexpr std::size_t dead_time{48};
 			};

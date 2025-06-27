@@ -54,7 +54,7 @@
 
 namespace caen {
 
-template <typename T, std::size_t N, typename = void> // last parameter to be removed, legacy support for timeout type
+template <typename T, std::size_t N> // last parameter to be removed, legacy support for timeout type
 class circular_buffer {
 public:
 
@@ -92,11 +92,6 @@ public:
 	using const_reference = typename container_type::const_reference;
 	using pointer = typename container_type::pointer;
 	using const_pointer = typename container_type::const_pointer;
-
-	template <typename Timeout>
-	static constexpr Timeout infinite_timeout() {
-		return Timeout{-1};
-	}
 
 #if BOOST_PREDEF_WORKAROUND(BOOST_COMP_GNUC, <, 12, 0, 0)
 	/*
@@ -175,31 +170,32 @@ public:
 	}
 
 	const_pointer get_buffer_read() {
-		return get_buffer_read(infinite_timeout<std::chrono::milliseconds>());
-	}
-
-	template <typename Timeout>
-	const_pointer get_buffer_read(Timeout timeout) {
 		std::unique_lock<std::mutex> lk(_mtx);
 		// prevent this function to be called by two threads until the buffer is released
 		if (BOOST_UNLIKELY(_read_pending))
 			throw std::runtime_error("another call to get_buffer_read is pending");
 		scoped_set<bool> ss(_read_pending, true);
 		auto condition = [this] { return valid_and_not_empty(); };
-		switch (timeout.count()) {
-		case infinite_timeout<decltype(timeout)>().count():
-			_cv.wait(lk, condition);
-			break;
-		case decltype(timeout)::zero().count():
-			// special case to avoid wait with 0 timeout
-			if (!condition())
-				return nullptr;
-			break;
-		default:
-			if (!_cv.wait_for(lk, timeout, condition))
-				return nullptr;
-			break;
-		}
+		// wait until the condition is satisfied
+		_cv.wait(lk, condition);
+		ss.release();
+		_read_halt = false;
+		// no need to notify for _read_halt set to false
+		return caen::to_address(_read_iterator);
+	}
+
+	template <typename Rep, typename Period>
+	const_pointer get_buffer_read(std::chrono::duration<Rep, Period> timeout) {
+		std::unique_lock<std::mutex> lk(_mtx);
+		// prevent this function to be called by two threads until the buffer is released
+		if (BOOST_UNLIKELY(_read_pending))
+			throw std::runtime_error("another call to get_buffer_read is pending");
+		scoped_set<bool> ss(_read_pending, true);
+		auto condition = [this] { return valid_and_not_empty(); };
+		// call wait_for only if the condition is not satisfied and the timeout is not zero,
+		// to avoid overheads of transforming wait_for into wait_until
+		if (!condition() && timeout != decltype(timeout)::zero() && !_cv.wait_for(lk, timeout, condition))
+			return nullptr;
 		ss.release();
 		_read_halt = false;
 		// no need to notify for _read_halt set to false

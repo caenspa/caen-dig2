@@ -134,25 +134,30 @@ void dpppsd::resize() {
 		auto& client = get_client();
 		const auto n_channels = client.get_n_channels();
 
-		// chenable and wavetriggersource can be set in run: in case, memory could be allocated by caen::resize during run
+		// chenable, wavetriggersource and waveanalogprobe0 can be set in run:
+		// in case, memory would be allocated by caen::resize during run with little
+		// performance penalty
 
-		const auto is_enabled = [&client](auto i) {
+		const auto is_wave_enabled = [&client](auto i) {
 			const auto enabled_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chenable", i));
-			return caen::string::iequals(enabled_s, "true"sv);
-		};
-
-		const auto is_wave_trg_enabled = [&client](auto i) {
+			if (caen::string::iequals(enabled_s, "false"sv))
+				return false;
 			const auto wavetriggersource_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/wavetriggersource", i));
 			return !caen::string::iequals(wavetriggersource_s, "disabled"sv);
 		};
 
 		const auto get_record_length = [&client](auto i) {
+			const auto wave_analog_probe_0_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/waveanalogprobe0", i));
+			const auto is_adc_input_16 = caen::string::iequals(wave_analog_probe_0_s, "adcinput16"sv);
 			const auto ch_record_length_s = client.get_value(client.get_digitizer_internal_handle(), fmt::format("/ch/{}/par/chrecordlengths", i));
-			return caen::lexical_cast<std::size_t>(ch_record_length_s);
+			auto ch_record_length = caen::lexical_cast<std::size_t>(ch_record_length_s);
+			if (is_adc_input_16)
+				ch_record_length *= 2;
+			return ch_record_length;
 		};
 
 		namespace ba = boost::adaptors;
-		const auto ch_record_length = caen::counting_range(n_channels) | ba::filtered(is_enabled) | ba::filtered(is_wave_trg_enabled) | ba::transformed(get_record_length);
+		const auto ch_record_length = caen::counting_range(n_channels) | ba::filtered(is_wave_enabled) | ba::transformed(get_record_length);
 
 		// store values in a container to avoid call get_value twice per each boost::max_element cycle
 		const caen::vector<std::size_t> ch_record_length_v(ch_record_length.begin(), ch_record_length.end());
@@ -160,7 +165,7 @@ void dpppsd::resize() {
 		const auto it = boost::max_element(ch_record_length_v);
 		const std::size_t max_record_length{BOOST_LIKELY(it != ch_record_length_v.end()) ? *it : 0};
 
-		BOOST_ASSERT_MSG(max_record_length <= hit_evt::wave_info_data::max_waveform_samples, "unexpected record length");
+		BOOST_ASSERT_MSG(max_record_length <= hit_evt::wave_info_data::max_waveform_samples_16bit, "unexpected record length");
 
 		// reserve here to avoid allocations during run
 		_pimpl->_buffer.apply_all([rl = max_record_length](hit_evt& evt) {
@@ -306,6 +311,7 @@ void dpppsd::decode_hit(const std::byte*& p) {
 						case s_ed::analog_probe::type::adc_input:						return dpp_analog_probe_type::adc_input;
 						case s_ed::analog_probe::type::baseline:						return dpp_analog_probe_type::baseline;
 						case s_ed::analog_probe::type::cfd:								return dpp_analog_probe_type::cfd;
+						case s_ed::analog_probe::type::adc_input_16bit:					return dpp_analog_probe_type::adc_input_16bit;
 						default:														return dpp_analog_probe_type::unknown;
 						}
 					}(probe._type);
@@ -355,7 +361,7 @@ void dpppsd::decode_hit(const std::byte*& p) {
 				BOOST_ASSERT_MSG(extra_type == s_ed::extra_id, "inconsistent extra type");
 				BOOST_ASSERT_MSG(special_event, "special_event flag should be set");
 				BOOST_ASSERT_MSG(!has_waveform, "has_waveform flag should not be set");
-				BOOST_ASSERT_MSG(!stats_time_info, "info data should not be already initialized");
+				BOOST_ASSERT_MSG(!stats_time_info, "stats info data should not be already initialized");
 
 				s_ed ed;
 
@@ -375,7 +381,7 @@ void dpppsd::decode_hit(const std::byte*& p) {
 				BOOST_ASSERT_MSG(extra_type == s_ed::extra_id, "inconsistent extra type");
 				BOOST_ASSERT_MSG(special_event, "special_event flag should be set");
 				BOOST_ASSERT_MSG(!has_waveform, "has_waveform flag should not be set");
-				BOOST_ASSERT_MSG(!stats_counter_info, "info data should not be already initialized");
+				BOOST_ASSERT_MSG(!stats_counter_info, "stats info data should not be already initialized");
 
 				s_ed ed;
 
@@ -440,25 +446,72 @@ void dpppsd::decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& e
 	if (BOOST_UNLIKELY(truncated))
 		_pimpl->_logger->warn("unexpected truncated waveform");
 
-	// numeric cast throws if result overflows size_t
-	const auto n_samples = boost::numeric_cast<std::size_t>(waveform_n_words * s_ed::samples_per_word);
+	const auto samples_16bit = std::get<0>(ed._analog_probes)._decoded_type == dpp_analog_probe_type::adc_input_16bit;
 
-	// resize probes (no allocation)
-	apply_all_probes(ed, [n_samples](auto& data) { caen::resize(data, n_samples); });
+	if (samples_16bit) {
 
-	for (auto w : caen::counting_range(waveform_n_words)) {
-		caen::serdes::deserialize(p, word);
-		for (auto i : caen::counting_range(s_ed::samples_per_word)) {
-			const auto s = (w * s_ed::samples_per_word) + i;
-			const auto sth_sample = [s](auto& probe) noexcept -> auto& { return probe._data[s]; };
-			caen::bit::mask_and_right_shift<s_ed::analog_probe::s::sample>(word, sth_sample(std::get<0>(ed._analog_probes)));
-			caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<0>(ed._digital_probes)));
-			caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<1>(ed._digital_probes)));
-			caen::bit::mask_and_right_shift<s_ed::analog_probe::s::sample>(word, sth_sample(std::get<1>(ed._analog_probes)));
-			caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<2>(ed._digital_probes)));
-			caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<3>(ed._digital_probes)));
+		// set other probe types to none
+		std::get<1>(ed._analog_probes)._decoded_type = dpp_analog_probe_type::none;
+		for (auto& probe : ed._digital_probes)
+			probe._decoded_type = dpp_digital_probe_type::none;
+
+		// numeric cast throws if result overflows size_t
+		const auto n_samples = boost::numeric_cast<std::size_t>(waveform_n_words * s_ed::samples_16bit_per_word);
+
+		// clear all probes
+		apply_all_probes(ed, [](auto& data) { caen::clear(data); });
+
+		auto& probe = std::get<0>(ed._analog_probes);
+
+		// resize analog probe 0 only (no allocation, unless adc_input_16bit has been enabled during run)
+		caen::resize(probe._data, n_samples);
+		caen::resize(probe._decoded_data, n_samples);
+
+		auto& waveform = probe._data;
+
+		for (auto it = waveform.begin(); it != waveform.end(); it += s_ed::samples_16bit_per_word) {
+
+			BOOST_ASSERT_MSG(it + s_ed::samples_16bit_per_word <= waveform.end(), "inconsistent waveform size");
+
+			caen::serdes::deserialize(p, word);
+
+			/*
+			 * See comment in scope::decode
+			 */
+			if constexpr (caen::endian::native == caen::endian::little) {
+				std::memcpy(caen::to_address(it), &word, word_size);
+			}
+			else {
+				for (auto i : caen::counting_range(s_ed::samples_16bit_per_word))
+					caen::bit::mask_and_right_shift<s_ed::analog_probe::s::sample_16bit>(word, *(it + i));
+				BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
+			}
+
 		}
-		BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
+
+	} else {
+
+		// numeric cast throws if result overflows size_t
+		const auto n_samples = boost::numeric_cast<std::size_t>(waveform_n_words * s_ed::samples_per_word);
+
+		// resize probes (no allocation)
+		apply_all_probes(ed, [n_samples](auto& data) { caen::resize(data, n_samples); });
+
+		for (auto w : caen::counting_range(waveform_n_words)) {
+			caen::serdes::deserialize(p, word);
+			for (auto i : caen::counting_range(s_ed::samples_per_word)) {
+				const auto s = (w * s_ed::samples_per_word) + i;
+				const auto sth_sample = [s](auto& probe) noexcept -> auto& { return probe._data[s]; };
+				caen::bit::mask_and_right_shift<s_ed::analog_probe::s::sample>(word, sth_sample(std::get<0>(ed._analog_probes)));
+				caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<0>(ed._digital_probes)));
+				caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<1>(ed._digital_probes)));
+				caen::bit::mask_and_right_shift<s_ed::analog_probe::s::sample>(word, sth_sample(std::get<1>(ed._analog_probes)));
+				caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<2>(ed._digital_probes)));
+				caen::bit::mask_and_right_shift<s_ed::digital_probe::s::sample>(word, sth_sample(std::get<3>(ed._digital_probes)));
+			}
+			BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
+		}
+
 	}
 
 	// compute decoded data
@@ -627,7 +680,7 @@ void dpppsd::read_data(timeout_t timeout, std::va_list* args) {
 			utility::put_argument(args, type, caen::to_underlying(std::get<3>(evt._wave_info_data._digital_probes)._decoded_type));
 			break;
 		case names::WAVEFORM_SIZE:
-			// assuming all probes have the same size
+			// returning size of probe 0, fine also in case of adc_input_16bit
 			utility::put_argument(args, type, std::get<0>(evt._wave_info_data._analog_probes)._data.size());
 			break;
 		case names::BOARD_FAIL:
@@ -761,23 +814,24 @@ void dpppsd::stats::read_data(timeout_t timeout, std::va_list* args) {
 		const auto name = std::get<0>(arg);
 		const auto type = std::get<1>(arg);
 		switch (name) {
+			namespace ba = boost::adaptors;
 		case names::REAL_TIME:
 			utility::put_argument_array(args, type, data._real_time);
 			break;
 		case names::REAL_TIME_NS:
-			utility::put_argument_array(args, type, data._real_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._real_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::DEAD_TIME:
 			utility::put_argument_array(args, type, data._dead_time);
 			break;
 		case names::DEAD_TIME_NS:
-			utility::put_argument_array(args, type, data._dead_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._dead_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::LIVE_TIME:
 			utility::put_argument_array(args, type, data._live_time);
 			break;
 		case names::LIVE_TIME_NS:
-			utility::put_argument_array(args, type, data._live_time | boost::adaptors::transformed(_pimpl->_to_ns));
+			utility::put_argument_array(args, type, data._live_time | ba::transformed(_pimpl->_to_ns));
 			break;
 		case names::TRIGGER_CNT:
 			utility::put_argument_array(args, type, data._trigger_cnt);

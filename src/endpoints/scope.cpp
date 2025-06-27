@@ -122,7 +122,8 @@ void scope::resize() {
 			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
-		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::transformed(is_enabled);
+		namespace ba = boost::adaptors;
+		const auto ch_enabled = caen::counting_range(n_channels) | ba::transformed(is_enabled);
 
 		// store values in a container to avoid call get_value for every event in the buffer (avoid std::vector<bool>)
 		const caen::vector<char> ch_enabled_v(ch_enabled.begin(), ch_enabled.end());
@@ -374,6 +375,7 @@ void scope::read_data(timeout_t timeout, std::va_list* args) {
 		const auto name = std::get<0>(arg);
 		const auto type = std::get<1>(arg);
 		switch (name) {
+			namespace ba = boost::adaptors;
 		case names::TIMESTAMP:
 			utility::put_argument(args, type, evt._timestamp);
 			break;
@@ -387,7 +389,7 @@ void scope::read_data(timeout_t timeout, std::va_list* args) {
 			utility::put_argument_matrix(args, type, evt._waveforms);
 			break;
 		case names::WAVEFORM_SIZE:
-			utility::put_argument_array(args, type, evt._waveforms | boost::adaptors::transformed([](const auto& w) noexcept { return w.size(); }));
+			utility::put_argument_array(args, type, evt._waveforms | ba::transformed([](const auto& w) noexcept { return w.size(); }));
 			break;
 		case names::SAMPLES_OVERLAPPED:
 			utility::put_argument(args, type, evt._samples_overlapped);

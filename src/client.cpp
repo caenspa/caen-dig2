@@ -57,6 +57,7 @@
 #include <boost/version.hpp>
 #include <nlohmann/json.hpp>
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/fmt/ostr.h>
 #include <spdlog/fmt/ranges.h>
 
 #if BOOST_OS_LINUX && BOOST_VERSION < 107000
@@ -84,15 +85,9 @@
 #include "endpoints/opendpp.hpp"
 #include "endpoints/scope.hpp"
 
-#if SPDLOG_VERSION >= 11400
-/*
- * fmt >= 10 requires explicix template specialization to use ostream formatter
- */
-#include <spdlog/fmt/bundled/ostream.h>
-
+// fmt >= 10 requires explicix template specialization to use ostream formatter
 template <> struct fmt::formatter<boost::asio::ip::address> : ostream_formatter {};
 template <> struct fmt::formatter<boost::asio::ip::tcp::endpoint> : ostream_formatter {};
-#endif
 
 namespace caen {
 
@@ -231,8 +226,7 @@ struct client::client_impl {
 	, _n_channels{} {
 
 		// set keep alive interval to patch rare missing data from digitizer
-		const auto keepalive = _url_data._keepalive.value_or(default_keepalive_interval);
-		if (keepalive != 0) {
+		if (const auto keepalive = _url_data._keepalive.value_or(default_keepalive_interval); keepalive != 0) {
 			_socket.set_option(boost::asio::socket_base::keep_alive{true});
 			_socket.set_option(caen::socket_option::keep_interval{keepalive});
 			_socket.set_option(caen::socket_option::keep_idle{keepalive});
@@ -438,7 +432,8 @@ struct client::client_impl {
 		auto hw_ep_list = [&ep_list = _endpoint_list]() {
 			auto cast_to_hw_ep = [](auto&& ptr) { return std::dynamic_pointer_cast<ep::hw_endpoint>(std::forward<decltype(ptr)>(ptr)); };
 			auto not_null = [](const auto& ptr) { return ptr != nullptr; };
-			return ep_list | boost::adaptors::transformed(cast_to_hw_ep) | boost::adaptors::filtered(not_null);
+			namespace ba = boost::adaptors;
+			return ep_list | ba::transformed(cast_to_hw_ep) | ba::filtered(not_null);
 		};
 		switch (ans.get_flag()) {
 			using f = answer::flag;
@@ -499,14 +494,10 @@ struct client::client_impl {
 
 private:
 
-	/*
-	 * These two constants cannot be made static constexpr variables since clang <= 5
-	 * (supporting only C++14) does not inline their values on boost::optional::value_or.
-	 */
-	static inline constexpr int default_keepalive_interval{4};
-	static inline constexpr bool default_monitor{false};
+	constexpr static int default_keepalive_interval{4};
+	constexpr static bool default_monitor{false};
 
-	static constexpr ep::endpoint::timeout_t get_timeout(int timeout) noexcept {
+	constexpr static ep::endpoint::timeout_t get_timeout(int timeout) noexcept {
 		return ep::endpoint::timeout_t{timeout};
 	}
 
@@ -749,6 +740,9 @@ url_data parse_url(const std::string& url) {
 			break;
 		case "receiver_thread_affinity"_h:
 			data._receiver_thread_affinity = caen::lexical_cast<int>(split_single_query.at(1));
+			break;
+		case "dump_path"_h:
+			data._dump_path = std::filesystem::path(split_single_query.at(1));
 			break;
 		default:
 			break;

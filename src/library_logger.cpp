@@ -38,6 +38,7 @@
 
 #include <array>
 #include <cstdlib>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -48,13 +49,13 @@
 #include <boost/version.hpp>
 #include <spdlog/spdlog.h>
 #include <spdlog/cfg/env.h>
-#include <spdlog/sinks/dist_sink.h>
+#include <spdlog/fmt/fmt.h>
+#include <spdlog/fmt/ranges.h>
 #include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/dist_sink.h>
 #if BOOST_OS_WINDOWS
 #include <spdlog/sinks/msvc_sink.h>
 #endif
-#include <spdlog/fmt/bundled/ranges.h>
-#include <spdlog/fmt/fmt.h>
 #include <nlohmann/json.hpp>
 
 #include <CAEN_FELib.h>

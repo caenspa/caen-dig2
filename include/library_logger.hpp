@@ -42,7 +42,6 @@
 #include <string>
 
 #include <spdlog/spdlog.h>
-#include <spdlog/fmt/ostr.h> // required to print custom objects
 
 namespace caen {
 

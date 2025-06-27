@@ -130,7 +130,8 @@ void dppzle::resize() {
 			return caen::string::iequals(enabled_s, "true"sv);
 		};
 
-		const auto ch_enabled = caen::counting_range(n_channels) | boost::adaptors::transformed(is_enabled);
+		namespace ba = boost::adaptors;
+		const auto ch_enabled = caen::counting_range(n_channels) | ba::transformed(is_enabled);
 
 		// store values in a container to avoid call get_value for every event in the buffer (avoid std::vector<bool>)
 		const caen::vector<std::uint8_t> ch_enabled_v(ch_enabled.begin(), ch_enabled.end());
@@ -499,6 +500,7 @@ void dppzle::read_data(timeout_t timeout, std::va_list* args) {
 		const auto name = std::get<0>(arg);
 		const auto type = std::get<1>(arg);
 		switch (name) {
+			namespace ba = boost::adaptors;
 		case names::TIMESTAMP:
 			utility::put_argument(args, type, evt._timestamp);
 			break;
@@ -509,37 +511,37 @@ void dppzle::read_data(timeout_t timeout, std::va_list* args) {
 			utility::put_argument(args, type, evt._record_length);
 			break;
 		case names::TRUNCATE_WAVE:
-			utility::put_argument_array(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept { return cd._truncate_wave; }));
+			utility::put_argument_array(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept { return cd._truncate_wave; }));
 			break;
 		case names::TRUNCATE_PARAM:
-			utility::put_argument_array(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept { return cd._truncate_param; }));
+			utility::put_argument_array(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept { return cd._truncate_param; }));
 			break;
 		case names::WAVEFORM_DEFVALUE:
-			utility::put_argument_array(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept { return cd._waveform_defvalue; }));
+			utility::put_argument_array(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept { return cd._waveform_defvalue; }));
 			break;
 		case names::CHUNK_NUMBER:
-			utility::put_argument_array(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept { return cd._chunk_size.size(); }));
+			utility::put_argument_array(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept { return cd._chunk_size.size(); }));
 			break;
 		case names::CHUNK_TIME:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_time; })); // const auto& required to avoid copy
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_time; })); // const auto& required to avoid copy
 			break;
 		case names::CHUNK_SIZE:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_size; })); // idem
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_size; })); // idem
 			break;
 		case names::CHUNK_BEGIN:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_begin; })); // idem
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._chunk_begin; })); // idem
 			break;
 		case names::WAVEFORM:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._waveform; })); // idem
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._waveform; })); // idem
 			break;
 		case names::RECONSTRUCTED_WAVEFORM:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._reconstructed_waveform; })); // idem
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._reconstructed_waveform; })); // idem
 			break;
 		case names::SAMPLE_TYPE:
-			utility::put_argument_matrix(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept -> const auto& { return cd._sample_type; })); // idem
+			utility::put_argument_matrix(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept -> const auto& { return cd._sample_type; })); // idem
 			break;
 		case names::RECONSTRUCTED_WAVEFORM_SIZE:
-			utility::put_argument_array(args, type, evt._channel_data | boost::adaptors::transformed([](const auto& cd) noexcept { return cd._reconstructed_waveform.size(); }));
+			utility::put_argument_array(args, type, evt._channel_data | ba::transformed([](const auto& cd) noexcept { return cd._reconstructed_waveform.size(); }));
 			break;
 		case names::BOARD_FAIL:
 			utility::put_argument(args, type, evt._board_fail);

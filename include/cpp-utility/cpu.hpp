@@ -37,26 +37,28 @@
 #ifndef CAEN_INCLUDE_CPP_UTILITY_CPU_HPP_
 #define CAEN_INCLUDE_CPP_UTILITY_CPU_HPP_
 
-#include <cstdint>
-#include <stdexcept>
+#include <system_error>
 
-#include "bit.hpp"
+#include <boost/predef/os.h>
 
-#if defined(_WIN32)
+#if BOOST_OS_WINDOWS
 // Unfortunately, Boost.WinAPI does not declare SetThreadAffinityMask.
 #include <Windows.h>
-#elif defined(__APPLE__)
+#include "bit.hpp"
+#elif BOOST_OS_MACOS
 #ifndef _DARWIN_C_SOURCE
 #error _DARWIN_C_SOURCE must be defined
 #endif
+#include <mach/kern_return.h>
 #include <mach/mach_init.h>
+#include <mach/thread_act.h>
 #include <mach/thread_policy.h>
-#include <pthread.h>
 #else
 #ifndef _GNU_SOURCE
 #error _GNU_SOURCE must be defined
 #endif
 #include <pthread.h>
+#include <sched.h>
 #endif
 
 namespace caen {
@@ -64,18 +66,18 @@ namespace caen {
 namespace cpu {
 
 inline void set_current_thread_affinity(int cpu_id) {
-#if defined(_WIN32)
+#if BOOST_OS_WINDOWS
 	const auto current_thread = ::GetCurrentThread();
 	const auto mask = caen::bit::get_bit<::DWORD_PTR>(cpu_id);
 	const auto r = ::SetThreadAffinityMask(current_thread, mask);
 	if (r == 0)
-		throw std::runtime_error("SetThreadAffinityMask failed");
-#elif defined(__APPLE__)
+		throw std::system_error(static_cast<int>(::GetLastError()), std::system_category(), "SetThreadAffinityMask");
+#elif BOOST_OS_MACOS
 	::thread_affinity_policy_data_t policy = { cpu_id };
 	const auto current_thread = ::mach_thread_self();
 	const auto r = ::thread_policy_set(current_thread, THREAD_AFFINITY_POLICY, reinterpret_cast<::thread_policy_t>(&policy), THREAD_AFFINITY_POLICY_COUNT);
-	if (r == KERN_SUCCESS)
-		throw std::runtime_error("thread_policy_set failed");
+	if (r != KERN_SUCCESS)
+		throw std::system_error(r, std::system_category(), "pthread_setaffinity_np");
 #else
 	::cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
@@ -83,7 +85,7 @@ inline void set_current_thread_affinity(int cpu_id) {
 	const auto current_thread = ::pthread_self();
 	const auto r = ::pthread_setaffinity_np(current_thread, sizeof(cpuset), &cpuset);
 	if (r != 0)
-		throw std::runtime_error("pthread_setaffinity_np failed");
+		throw std::system_error(r, std::system_category(), "pthread_setaffinity_np");
 #endif
 }
 
