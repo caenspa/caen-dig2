@@ -198,6 +198,7 @@ private:
 					input_saturation				= 0b1001,
 					charge_over_range				= 0b1010,
 					negative_over_threshold			= 0b1011,
+					coincidence_anticoincidence		= 0b1101,
 				};
 				// fields
 				type _type;

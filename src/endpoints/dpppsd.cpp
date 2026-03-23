@@ -343,6 +343,7 @@ void dpppsd::decode_hit(const std::byte*& p) {
 						case s_ed::digital_probe::type::charge_over_range:				return dpp_digital_probe_type::charge_over_range;
 						case s_ed::digital_probe::type::input_saturation:				return dpp_digital_probe_type::input_saturation;
 						case s_ed::digital_probe::type::negative_over_threshold:		return dpp_digital_probe_type::negative_over_threshold;
+						case s_ed::digital_probe::type::coincidence_anticoincidence:	return dpp_digital_probe_type::coincidence_anticoincidence;
 						default:														return dpp_digital_probe_type::unknown;
 						}
 					}(probe._type);

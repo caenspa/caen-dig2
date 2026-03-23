@@ -123,7 +123,7 @@ private:
 		};
 		// constants
 		static inline constexpr std::size_t samples_per_word{word_bit_size / s::sample};
-		static inline constexpr std::size_t max_user_info_words{4};
+		static inline constexpr std::size_t max_user_info_words{509};
 		static inline constexpr std::size_t max_waveform_words{4095};
 		static inline constexpr std::size_t max_waveform_samples{max_waveform_words * samples_per_word};
 		// typedefs

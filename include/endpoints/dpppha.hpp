@@ -198,6 +198,7 @@ private:
 					post_saturation_event			= 0b1010,
 					energy_filter_saturation		= 0b1011,
 					signal_inhibit					= 0b1100,
+					coincidence_anticoincidence		= 0b1101,
 				};
 				// fields
 				type _type;

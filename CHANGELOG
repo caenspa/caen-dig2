@@ -11,6 +11,20 @@
 -----------------------------------------------------------------------------
 
 
+v1.8.2 (24/10/2025)
+-------------------
+
+New features:
+- Demo projects updated to Visual Studio 2019.
+- Support for coincidence_anticoincidence digital probe type on DPP-PHA and
+    DPP-PSD.
+
+Fixes:
+- Reduced internal library memory allocation when using the rawudp endpoint
+    on 10G UDP.
+- Add missing files in sync demo folder.
+
+
 v1.8.1 (17/06/2025)
 -------------------
 

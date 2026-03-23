@@ -54,6 +54,7 @@ enum struct dpp_digital_probe_type : std::uint8_t {
 	re_trigger_guard				= 0b00010,
 	energy_filter_baseline_freeze	= 0b00011,
 	event_pile_up					= 0b00111,
+	coincidence_anticoincidence		= 0b01101,
 	// PHA specific (PHA firmware values)
 	energy_filter_peaking			= 0b00100,
 	energy_filter_peak_ready		= 0b00101,

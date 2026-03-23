@@ -616,7 +616,7 @@ private:
 			} else {
 				// datagram of the previous buffer lost
 				SPDLOG_LOGGER_DEBUG(_logger, "last datagrams of previous buffer have been lost (buffer_id={}, expected_buffer_id={})", footer._buffer_id, expected_buffer_id);
-				// if datagram_it would be zero, we can start a new buffer
+				// if datagram_id would be zero, we can start a new buffer
 				expected_datagram_id = 0;
 				_clear_buffer = true;
 			}

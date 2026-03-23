@@ -373,6 +373,7 @@ static const char* digital_probe_type(uint8_t type) {
 	case 25:	return "input_saturation";
 	case 26:	return "charge_over_range";
 	case 27:	return "negative_over_threshold";
+	case 13:	return "coincidence_anticoincidence";
 	default:	return "UNKNOWN";
 	}
 }
@@ -380,6 +381,7 @@ static const char* digital_probe_type(uint8_t type) {
 static const char* analog_probe_type(uint8_t type) {
 	switch (type) {
 	case 0:		return "adc_input";
+	case 5:		return "adc_input_16bit";
 	case 9:		return "baseline";
 	case 10:	return "cfd";
 	default:	return "UNKNOWN";

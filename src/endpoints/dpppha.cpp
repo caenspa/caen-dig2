@@ -346,6 +346,7 @@ void dpppha::decode_hit(const std::byte*& p) {
 						case s_ed::digital_probe::type::post_saturation_event:			return dpp_digital_probe_type::post_saturation_event;
 						case s_ed::digital_probe::type::energy_filter_saturation:		return dpp_digital_probe_type::energy_filter_saturation;
 						case s_ed::digital_probe::type::signal_inhibit:					return dpp_digital_probe_type::signal_inhibit;
+						case s_ed::digital_probe::type::coincidence_anticoincidence:	return dpp_digital_probe_type::coincidence_anticoincidence;
 						default:														return dpp_digital_probe_type::unknown;
 						}
 					}(probe._type);
