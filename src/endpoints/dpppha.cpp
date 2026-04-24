@@ -467,7 +467,7 @@ void dpppha::decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& e
 
 		auto& probe = std::get<0>(ed._analog_probes);
 
-		// resize analog probe 0 only (no allocation)
+		// resize analog probe 0 only (no allocation, unless adc_input_16bit has been enabled during run)
 		caen::resize(probe._data, n_samples);
 		caen::resize(probe._decoded_data, n_samples);
 

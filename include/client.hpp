@@ -37,6 +37,7 @@
 #ifndef CAEN_INCLUDE_CLIENT_HPP_
 #define CAEN_INCLUDE_CLIENT_HPP_
 
+#include <chrono>
 #include <cstdarg>
 #include <filesystem>
 #include <list>
@@ -72,7 +73,9 @@ struct url_data {
 	std::optional<bool> _monitor;
 	std::optional<spdlog::level::level_enum> _log_level;
 	std::optional<std::string> _pid;
-	std::optional<int> _keepalive;
+	std::optional<int> _keep_alive;
+	std::optional<int> _keep_cnt;
+	std::optional<std::chrono::seconds> _cmd_timeout;
 	std::optional<int> _rcvbuf;
 	std::optional<int> _receiver_thread_affinity;
 	std::optional<std::filesystem::path> _dump_path;

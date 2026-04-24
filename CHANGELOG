@@ -11,6 +11,26 @@
 -----------------------------------------------------------------------------
 
 
+v1.8.3 (24/04/2026)
+-------------------
+
+New features:
+- New query parameter "keepcnt" to adjust the keep-alive socket probe count
+    (default: 20). Used together with "keepalive" to fine-tune TCP keep-alive
+    behavior on network connections.
+- New query parameter "cmdtimeout" to set, in seconds, the timeout used on
+    command socket read/write operations.
+    If cmdtimeout is greater than 0, command I/O uses asynchronous operations
+    with timeout handling. If cmdtimeout is 0 (default), command I/O keeps the
+    historical blocking behavior.
+
+Fixes:
+- Fix infinite timeout for CAEN_FELib_ReadData/CAEN_FELib_HasData when using
+    -1 as argument, broken since v1.7.2.
+- Fix possible deadlock when connecting to 10G UDP firmwares, especially when
+    using Linux.
+
+
 v1.8.2 (24/10/2025)
 -------------------
 

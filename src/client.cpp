@@ -215,6 +215,7 @@ struct client::client_impl {
 	client_impl(const url_data& data)
 	: _url_data(data)
 	, _monitor(data._monitor.value_or(default_monitor))
+	, _cmd_timeout{ data._cmd_timeout.value_or(default_cmd_timeout) }
 	, _logger{library_logger::create_logger(_url_data._authority, _url_data._log_level)}
 	, _io_context{}
 	, _socket(_io_context)
@@ -227,12 +228,17 @@ struct client::client_impl {
 	, _n_channels{} {
 
 		// set keep alive interval to patch rare missing data from digitizer
-		if (const auto keepalive = _url_data._keepalive.value_or(default_keepalive_interval); keepalive != 0) {
+		if (const auto keep_interval = _url_data._keep_alive.value_or(default_keep_interval); keep_interval != 0) {
 			_socket.set_option(boost::asio::socket_base::keep_alive{true});
-			_socket.set_option(caen::socket_option::keep_interval{keepalive});
-			_socket.set_option(caen::socket_option::keep_idle{keepalive});
-			_socket.set_option(caen::socket_option::keep_cnt{20}); // hardcoded
+			_socket.set_option(caen::socket_option::keep_interval{keep_interval});
+			_socket.set_option(caen::socket_option::keep_idle{keep_interval});
+			const auto keep_cnt = _url_data._keep_cnt.value_or(default_keep_cnt);
+			_socket.set_option(caen::socket_option::keep_cnt{keep_cnt});
+			_logger->info("TCP keep alive enabled (interval={}s, cnt={})", keep_interval, keep_cnt);
 		}
+
+		if (_cmd_timeout != decltype(_cmd_timeout)::zero())
+			_logger->info("command timeout set to {}s", _cmd_timeout.count());
 
 		// call to CONNECT
 		constexpr cmd::handle_t tmp_handle{0x67696F}; // internal handle can be anything since it is not used in CONNECT
@@ -495,7 +501,9 @@ struct client::client_impl {
 
 private:
 
-	constexpr static int default_keepalive_interval{4};
+	constexpr static int default_keep_interval{4};
+	constexpr static int default_keep_cnt{20};
+	constexpr static std::chrono::seconds default_cmd_timeout{0};
 	constexpr static bool default_monitor{false};
 
 	constexpr static ep::endpoint::timeout_t get_timeout(int timeout) noexcept {
@@ -526,6 +534,62 @@ private:
 		if (!_io_context.stopped())
 			stopped_callback();
 
+	}
+
+	template <typename Buffer>
+	void write(Buffer&& buffer) {
+
+		if (BOOST_LIKELY(_cmd_timeout == decltype(_cmd_timeout)::zero())) {
+
+			boost::asio::write(_socket, std::forward<Buffer>(buffer));
+
+		} else {
+
+			boost::system::error_code ec;
+
+			boost::asio::async_write(_socket, std::forward<Buffer>(buffer), [&ec](const boost::system::error_code& new_ec, std::size_t) {
+				ec = new_ec;
+			});
+
+			run_context_for(_cmd_timeout, [this] {
+				// close the socket to cancel the outstanding asynchronous operation
+				_socket.close();
+
+				// run the io_context again until the operation completes: this will set ec to an error
+				_io_context.run();
+			});
+
+			if (ec)
+				throw ex::communication_error(ec.message());
+		}
+	}
+
+	template <typename Buffer>
+	void read(Buffer&& buffer) {
+
+		if (BOOST_LIKELY(_cmd_timeout == decltype(_cmd_timeout)::zero())) {
+
+			boost::asio::read(_socket, std::forward<Buffer>(buffer));
+
+		} else {
+
+			boost::system::error_code ec;
+
+			boost::asio::async_read(_socket, std::forward<Buffer>(buffer), [&ec](const boost::system::error_code& new_ec, std::size_t) {
+				ec = new_ec;
+			});
+
+			run_context_for(_cmd_timeout, [this] {
+				// close the socket to cancel the outstanding asynchronous operation
+				_socket.close();
+
+				// run the io_context again until the operation completes: this will set ec to an error
+				_io_context.run();
+			});
+
+			if (ec)
+				throw ex::communication_error(ec.message());
+		}
 	}
 
 	boost::asio::ip::address connect_to(const url_data& data) {
@@ -598,10 +662,10 @@ private:
 
 		std::unique_lock lk{ _mtx };
 
-		boost::asio::write(_socket, buffers);
+		write(buffers);
 
 		// read header
-		boost::asio::read(_socket, boost::asio::buffer(header_buffer));
+		read(boost::asio::buffer(header_buffer));
 
 		auto b_const_it = header_buffer.cbegin();
 		auto size = caen::serdes::deserialize<std::uint64_t>(b_const_it);
@@ -614,7 +678,7 @@ private:
 
 		// read data
 		boost::asio::streambuf reply_buffer(required_size);
-		boost::asio::read(_socket, reply_buffer);
+		read(reply_buffer);
 
 		lk.unlock();
 
@@ -683,6 +747,7 @@ private:
 	mutable std::mutex _mtx;
 	const url_data _url_data;
 	const bool _monitor;
+	const std::chrono::seconds _cmd_timeout;
 	std::shared_ptr<spdlog::logger> _logger;
 	boost::asio::io_context _io_context;
 	boost::asio::ip::tcp::socket _socket;
@@ -737,7 +802,13 @@ url_data parse_url(const std::string& url) {
 			data._pid = split_single_query.at(1);
 			break;
 		case "keepalive"_h:
-			data._keepalive = caen::lexical_cast<int>(split_single_query.at(1));
+			data._keep_alive = caen::lexical_cast<int>(split_single_query.at(1));
+			break;
+		case "keepcnt"_h:
+			data._keep_cnt = caen::lexical_cast<int>(split_single_query.at(1));
+			break;
+		case "cmdtimeout"_h:
+			data._cmd_timeout = std::chrono::seconds(caen::lexical_cast<int>(split_single_query.at(1)));
 			break;
 		case "rcvbuf"_h:
 			data._rcvbuf = caen::lexical_cast<int>(split_single_query.at(1));

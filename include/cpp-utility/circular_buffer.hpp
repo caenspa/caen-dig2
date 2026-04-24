@@ -184,8 +184,15 @@ public:
 		return caen::to_address(_read_iterator);
 	}
 
+	template <typename Timeout>
+	static constexpr Timeout infinite_timeout() {
+		return Timeout{ -1 };
+	}
+
 	template <typename Rep, typename Period>
 	const_pointer get_buffer_read(std::chrono::duration<Rep, Period> timeout) {
+		if (timeout == infinite_timeout<decltype(timeout)>())
+			return get_buffer_read();
 		std::unique_lock<std::mutex> lk(_mtx);
 		// prevent this function to be called by two threads until the buffer is released
 		if (BOOST_UNLIKELY(_read_pending))

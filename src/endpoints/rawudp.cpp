@@ -158,8 +158,16 @@ struct rawudp::endpoint_impl {
 		do {
 			// send empty packet to expose local port
 			const std::array<std::byte, 0> arr{};
-			_socket.send(boost::asio::buffer(arr));
-			std::this_thread::sleep_for(10ms);
+			try {
+				// errors ignored: see comment in async_receive handler for details
+				_socket.send(boost::asio::buffer(arr));
+			} catch (const boost::system::system_error& e) {
+				if (e.code() == boost::asio::error::connection_refused)
+					_logger->warn("ignoring connection_refused error: {}", e.code().message());
+				else
+					throw;
+			}
+			std::this_thread::sleep_for(100ms);
 		} while (client.get_value(0, "/par/registermisc", "0x8014") == "0"s);
 
 		// clear data to handle first fake event sent at connect
@@ -575,6 +583,11 @@ private:
 
 		SPDLOG_LOGGER_DEBUG(_logger, "data received (size={})", bytes_transferred);
 
+		if (bytes_transferred == 0) {
+			SPDLOG_LOGGER_DEBUG(_logger, "ignoring empty datagram");
+			return;
+		}
+
 		// datagram cannot be larger than 65507 bytes and must contain at least the footer
 		BOOST_ASSERT_MSG(datagram_footer_size <= bytes_transferred && bytes_transferred <= _datagram_buffer.size(), "invalid bytes_transferred");
 
@@ -747,10 +760,20 @@ private:
 		SPDLOG_LOGGER_TRACE(_logger, "{}()", __func__);
 
 		_socket.async_receive(boost::asio::buffer(_datagram_buffer), [this](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+			/*
+			 * Ignore connection_refused error, that might happen if the last send of empty packet
+			 * to expose local port is done after the remote endpoint has been closed. In this case,
+			 * the remote endpoint sends an ICMP port unreachable message that causes the next operation
+			 * to fail with connection_refused error, that we can safely ignore.
+			 */
 			if (ec) {
 				_logger->error("async_read failed: {} (bytes_transferred={})", ec.message(), bytes_transferred);
-				disconnect();
-				return;
+				if (ec == boost::asio::error::connection_refused) {
+					_logger->warn("ignoring connection_refused errors");
+				} else {
+					disconnect();
+					return;
+				}
 			}
 			do_read(bytes_transferred);
 			enqueue_read();
