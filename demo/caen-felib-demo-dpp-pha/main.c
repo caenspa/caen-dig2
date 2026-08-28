@@ -383,6 +383,7 @@ static const char* digital_probe_type(uint8_t type) {
 	case 11:	return "energy_filter_saturation";
 	case 12:	return "signal_inhibit";
 	case 13:	return "coincidence_anticoincidence";
+	case 14:	return "pha_cfd_filter_armed";
 	default:	return "UNKNOWN";
 	}
 }
@@ -395,6 +396,7 @@ static const char* analog_probe_type(uint8_t type) {
 	case 3:		return "energy_filter_baseline";
 	case 4:		return "energy_filter_minus_baseline";
 	case 5:		return "adc_input_16bit";
+	case 6:		return "pha_cfd_filter";
 	default:	return "UNKNOWN";
 	}
 }

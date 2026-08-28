@@ -97,6 +97,7 @@ struct dpppha final : public aggregate_endpoint {
 	void resize() override;
 	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
+	void notify_error(std::exception_ptr e) override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
 	void has_data(timeout_t timeout) override;
@@ -199,6 +200,7 @@ private:
 					energy_filter_saturation		= 0b1011,
 					signal_inhibit					= 0b1100,
 					coincidence_anticoincidence		= 0b1101,
+					pha_cfd_filter_armed			= 0b1110,
 				};
 				// fields
 				type _type;
@@ -230,6 +232,7 @@ private:
 					energy_filter_baseline			= 0b011,
 					energy_filter_minus_baseline	= 0b100,
 					adc_input_16bit					= 0b101,
+					pha_cfd_filter					= 0b110,
 				};
 				// fields
 				mul_factor _mul_factor;
@@ -334,10 +337,10 @@ private:
 	void decode_hit(const std::byte*& p);
 	void decode_hit_waveform(const std::byte*& p, hit_evt::wave_info_data& ed);
 
+	std::shared_ptr<stats> _stats_ep;
+
 	struct endpoint_impl; // forward declaration
 	std::unique_ptr<endpoint_impl> _pimpl;
-
-	std::shared_ptr<stats> _stats_ep;
 
 };
 

@@ -205,6 +205,111 @@ catch (...) {
 	return handle_exception();
 }
 
+namespace {
+
+// Append one failed item to the condensed last-error message, keeping it within the size
+// declared by CAEN(Dig2)_GetLastError() (max_size::str::last_error_description, 1024 bytes).
+void append_multi_failure(std::string& condensed, size_t index, const std::string& path, const std::string& message) {
+	constexpr size_t cap = lib::max_size::str::last_error_description - 4; // leave room for the "..." marker
+	if (condensed.size() >= cap)
+		return;
+	if (!condensed.empty())
+		condensed += "; ";
+	condensed += "item " + std::to_string(index) + " (" + path + "): " + message;
+	if (condensed.size() > cap) {
+		condensed.resize(cap);
+		condensed += "...";
+	}
+}
+
+} // unnamed namespace
+
+int CAEN_FELIB_API CAENDig2_SetValues(uint32_t handle, const char* const* paths, const char* const* values, size_t count, int* results) try {
+	if (count == 0)
+		return ::CAEN_FELib_Success;
+	if (BOOST_UNLIKELY(caen::is_in(nullptr, paths, values, results)))
+		throw lib::ex::invalid_argument("null and count != 0");
+	std::vector<std::string> path_vec;
+	std::vector<std::string> value_vec;
+	path_vec.reserve(count);
+	value_vec.reserve(count);
+	for (size_t i = 0; i < count; ++i) {
+		if (BOOST_UNLIKELY(caen::is_in(nullptr, paths[i], values[i])))
+			throw lib::ex::invalid_argument("null entry");
+		path_vec.emplace_back(caen::string::pointer_to_string_safe(paths[i], lib::max_size::str::path));
+		value_vec.emplace_back(caen::string::pointer_to_string_safe(values[i], lib::max_size::str::value));
+	}
+	const auto outcomes = lib::set_values(handle, path_vec, value_vec);
+	if (BOOST_UNLIKELY(outcomes.size() != count))
+		throw lib::ex::command_error("unexpected number of answers from device");
+	// fill the per-item result codes and condense the failure messages into the last error
+	std::string condensed;
+	bool any_failed = false;
+	for (size_t i = 0; i < count; ++i) {
+		if (outcomes[i].ok) {
+			results[i] = ::CAEN_FELib_Success;
+		} else {
+			results[i] = ::CAEN_FELib_CommandError;
+			any_failed = true;
+			append_multi_failure(condensed, i, path_vec[i], outcomes[i].value);
+		}
+	}
+	if (any_failed) {
+		lib::last_error::instance() = condensed;
+		return ::CAEN_FELib_CommandError;
+	}
+	return ::CAEN_FELib_Success;
+}
+catch (...) {
+	const int ret = handle_exception();
+	if (results != nullptr) // report the global failure on every item so the array is always defined
+		for (size_t i = 0; i < count; ++i)
+			results[i] = ret;
+	return ret;
+}
+
+int CAEN_FELIB_API CAENDig2_GetValues(uint32_t handle, const char* const* paths, char* const* values, size_t count, int* results) try {
+	if (count == 0)
+		return ::CAEN_FELib_Success;
+	if (BOOST_UNLIKELY(caen::is_in(nullptr, paths, values, results)))
+		throw lib::ex::invalid_argument("null and count != 0");
+	std::vector<std::string> path_vec;
+	path_vec.reserve(count);
+	for (size_t i = 0; i < count; ++i) {
+		if (BOOST_UNLIKELY(caen::is_in(nullptr, paths[i], values[i])))
+			throw lib::ex::invalid_argument("null entry");
+		path_vec.emplace_back(caen::string::pointer_to_string_safe(paths[i], lib::max_size::str::path));
+	}
+	const auto outcomes = lib::get_values(handle, path_vec);
+	if (BOOST_UNLIKELY(outcomes.size() != count))
+		throw lib::ex::command_error("unexpected number of answers from device");
+	std::string condensed;
+	bool any_failed = false;
+	for (size_t i = 0; i < count; ++i) {
+		if (outcomes[i].ok) {
+			results[i] = ::CAEN_FELib_Success;
+			caen::string::string_to_pointer_safe(values[i], outcomes[i].value, lib::max_size::str::value);
+		} else {
+			results[i] = ::CAEN_FELib_CommandError;
+			caen::string::string_to_pointer_safe(values[i], std::string{}, lib::max_size::str::value);
+			any_failed = true;
+			append_multi_failure(condensed, i, path_vec[i], outcomes[i].value);
+		}
+	}
+	if (any_failed) {
+		lib::last_error::instance() = condensed;
+		return ::CAEN_FELib_CommandError;
+	}
+	return ::CAEN_FELib_Success;
+}
+catch (...) {
+	const int ret = handle_exception();
+	if (results != nullptr) // report the global failure on every item so the array is always defined
+		for (size_t i = 0; i < count; ++i)
+			results[i] = ret;
+	return ret;
+}
+
 int CAEN_FELIB_API CAENDig2_SendCommand(uint32_t handle, const char* path) try {
 	lib::send_command(handle, caen::string::pointer_to_string_safe(path, lib::max_size::str::path));
 	return ::CAEN_FELib_Success;

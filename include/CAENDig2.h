@@ -40,8 +40,8 @@
 #include <CAEN_FELib.h>
 
 #define CAEN_DIG2_VERSION_MAJOR		1
-#define CAEN_DIG2_VERSION_MINOR		8
-#define CAEN_DIG2_VERSION_PATCH		3
+#define CAEN_DIG2_VERSION_MINOR		9
+#define CAEN_DIG2_VERSION_PATCH		0
 #define CAEN_DIG2_VERSION			(CAEN_DIG2_VERSION_MAJOR * 10000) + (CAEN_DIG2_VERSION_MINOR * 100) + (CAEN_DIG2_VERSION_PATCH)
 #define CAEN_DIG2_VERSION_STRING	CAEN_FELIB_STR(CAEN_DIG2_VERSION_MAJOR) "." CAEN_FELIB_STR(CAEN_DIG2_VERSION_MINOR) "." CAEN_FELIB_STR(CAEN_DIG2_VERSION_PATCH)
 
@@ -76,6 +76,10 @@ CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_GetNodeProperties(uint32_t handle,
 CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_GetValue(uint32_t handle, const char* path, char value[256]);
 
 CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_SetValue(uint32_t handle, const char* path, const char* value);
+
+CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_SetValues(uint32_t handle, const char* const* paths, const char* const* values, size_t count, int* results);
+
+CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_GetValues(uint32_t handle, const char* const* paths, char* const* values, size_t count, int* results);
 
 CAEN_FELIB_DLLAPI int CAEN_FELIB_API CAENDig2_SendCommand(uint32_t handle, const char* path);
 

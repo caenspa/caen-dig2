@@ -433,6 +433,10 @@ void scope::clear_data() {
 	_pimpl->_buffer.invalidate_buffers();
 }
 
+void scope::notify_error(std::exception_ptr e) {
+	_pimpl->_buffer.set_error(std::move(e));
+}
+
 } // namespace ep
 
 } // namespace dig2

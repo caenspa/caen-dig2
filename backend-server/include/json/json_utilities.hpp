@@ -15,7 +15,7 @@
 *	License as published by the Free Software Foundation; either
 *	version 3 of the License, or (at your option) any later version.
 *
-*	TheCAEN Back-end Server is distributed in the hope that it will be useful,
+*	The CAEN Back-end Server is distributed in the hope that it will be useful,
 *	but WITHOUT ANY WARRANTY; without even the implied warranty of
 *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 *	Lesser General Public License for more details.
@@ -37,26 +37,26 @@
 #ifndef CAEN_INCLUDE_JSON_JSON_UTILITIES_HPP_
 #define CAEN_INCLUDE_JSON_JSON_UTILITIES_HPP_
 
+#include <optional>
+
 #include <nlohmann/json.hpp>
 
 #include <boost/algorithm/string/case_conv.hpp>
 
-#include "cpp-utility/optional.hpp"
-
-// partial specialization for caen::optional
+// partial specialization for std::optional
 namespace nlohmann {
 
 template <typename T>
-struct adl_serializer<caen::optional<T>> {
-	static void to_json(json& j, const caen::optional<T>& opt) {
+struct adl_serializer<std::optional<T>> {
+	static void to_json(json& j, const std::optional<T>& opt) {
 		if (!opt)
 			j = nullptr;
 		else
 			j = *opt;
 	}
-	static void from_json(const json& j, caen::optional<T>& opt) {
+	static void from_json(const json& j, std::optional<T>& opt) {
 		if (j.is_null())
-			opt = caen::nullopt;
+			opt = std::nullopt;
 		else
 			opt = j.get<T>();
 	}

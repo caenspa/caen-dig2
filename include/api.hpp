@@ -45,6 +45,8 @@
 
 #include <CAEN_FELib.h>
 
+#include "lib_definitions.hpp"
+
 namespace caen {
 
 namespace dig2 {
@@ -74,6 +76,10 @@ std::pair<std::string, ::CAEN_FELib_NodeType_t> get_node_properties(std::uint32_
 std::string get_value(std::uint32_t handle, const std::string& path, const std::string& arg = std::string{});
 
 void set_value(std::uint32_t handle, const std::string& path, const std::string& value);
+
+std::vector<multi_result> set_values(std::uint32_t handle, const std::vector<std::string>& paths, const std::vector<std::string>& values);
+
+std::vector<multi_result> get_values(std::uint32_t handle, const std::vector<std::string>& paths);
 
 void send_command(std::uint32_t handle, const std::string& path);
 

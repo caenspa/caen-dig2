@@ -15,7 +15,7 @@
 *	License as published by the Free Software Foundation; either
 *	version 3 of the License, or (at your option) any later version.
 *
-*	TheCAEN Back-end Server is distributed in the hope that it will be useful,
+*	The CAEN Back-end Server is distributed in the hope that it will be useful,
 *	but WITHOUT ANY WARRANTY; without even the implied warranty of
 *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 *	Lesser General Public License for more details.
@@ -37,14 +37,21 @@
 #ifndef CAEN_INCLUDE_JSON_JSON_ANSWER_HPP_
 #define CAEN_INCLUDE_JSON_JSON_ANSWER_HPP_
 
-#include <string>
+
+#include <cstddef>
 #include <exception>
+#include <string>
+#include <string_view>
 #include <tuple>
 
 #include <nlohmann/json.hpp>
 
+#include "cpp-utility/serdes.hpp"
+#include "cpp-utility/vector.hpp"
 #include "json/json_utilities.hpp"
 #include "json/json_common.hpp"
+
+using namespace std::literals;
 
 struct json_answer {
 
@@ -79,7 +86,8 @@ struct json_answer {
 		: _cmd{cmd::command::UNKNOWN}
 		, _result{}
 		, _flag{answer::flag::UNKNOWN}
-		, _value{} {
+		, _value{}
+		, _multiple{} {
 	}
 
 	/**
@@ -100,31 +108,114 @@ struct json_answer {
 		return nlohmann::json(*this).dump();
 	}
 
+	static inline constexpr std::size_t binary_header_size = sizeof(cmd::command) + sizeof(std::uint8_t) + sizeof(answer::flag);
+
+	static json_answer from_binary(const caen::vector<std::byte>& data) {
+		auto b_it = data.begin();
+		// decode header
+		const auto cmd = caen::serdes::deserialize<cmd::command>(b_it);
+		const auto result = caen::serdes::deserialize<std::uint8_t>(b_it);
+		const auto flag = caen::serdes::deserialize<answer::flag>(b_it);
+		BOOST_ASSERT(b_it == data.begin() + binary_header_size);
+		// decode payload
+		const auto value_count = caen::serdes::deserialize<std::uint64_t>(b_it);
+		answer::value_t values;
+		values.reserve(value_count);
+		for (std::uint64_t i = 0; i < value_count; ++i) {
+			const auto value_size = caen::serdes::deserialize<std::uint64_t>(b_it);
+			answer::single_value_t value;
+			value.reserve(value_size);
+			std::transform(b_it, b_it + value_size, std::back_inserter(value), [](const auto& c) { return static_cast<char>(c); });
+			b_it += value_size;
+			values.push_back(std::move(value));
+		}
+		// construct json_answer
+		auto r = json_answer();
+		r._cmd = cmd;
+		r._result = static_cast<bool>(result);
+		r._flag = flag;
+		r._value = std::move(values);
+		// decode nested MULTIPLE answers
+		const auto multiple_count = caen::serdes::deserialize<std::uint64_t>(b_it);
+		r._multiple.reserve(multiple_count);
+		for (std::uint64_t i = 0; i < multiple_count; ++i) {
+			const auto child_size = caen::serdes::deserialize<std::uint64_t>(b_it);
+			caen::vector<std::byte> child_data(child_size);
+			std::copy(b_it, b_it + child_size, child_data.begin());
+			b_it += child_size;
+			r._multiple.push_back(from_binary(child_data));
+		}
+		BOOST_ASSERT(b_it == data.end());
+		return r;
+	}
+
+	caen::vector<std::byte> to_binary() const {
+		// serialize the nested MULTIPLE answers first, to know their sizes
+		std::vector<caen::vector<std::byte>> children;
+		children.reserve(_multiple.size());
+		std::size_t children_size = 0;
+		for (const auto& child : _multiple) {
+			auto child_data = child.to_binary();
+			children_size += sizeof(std::uint64_t) + child_data.size();
+			children.push_back(std::move(child_data));
+		}
+		// calculate total size needed: header + value count + values + multiple count + sized children
+		const auto values_size = std::accumulate(_value.begin(), _value.end(), std::size_t{0}, [](std::size_t acc, const answer::single_value_t& v) {
+			return acc + sizeof(std::uint64_t) + v.size();
+		});
+		const auto size = binary_header_size + sizeof(std::uint64_t) + values_size + sizeof(std::uint64_t) + children_size;
+		caen::vector<std::byte> res(size);
+		auto b_it = res.begin();
+		// serialize header
+		caen::serdes::serialize<cmd::command>(b_it, _cmd);
+		caen::serdes::serialize<std::uint8_t>(b_it, _result);
+		caen::serdes::serialize<answer::flag>(b_it, _flag);
+		BOOST_ASSERT(b_it == res.begin() + binary_header_size);
+		// serialize the values, prefixed by an explicit count
+		caen::serdes::serialize<std::uint64_t>(b_it, _value.size());
+		for (const auto& v : _value) {
+			caen::serdes::serialize<std::uint64_t>(b_it, v.size());
+			b_it = std::transform(v.begin(), v.end(), b_it, [](const auto& c) { return static_cast<std::byte>(c); });
+		}
+		// serialize the nested MULTIPLE answers
+		caen::serdes::serialize<std::uint64_t>(b_it, _multiple.size());
+		for (const auto& child_data : children) {
+			caen::serdes::serialize<std::uint64_t>(b_it, child_data.size());
+			b_it = std::copy(child_data.begin(), child_data.end(), b_it);
+		}
+		BOOST_ASSERT(b_it == res.end());
+		return res;
+	}
+
 	cmd::command get_cmd() const noexcept { return _cmd; }
 	answer::flag get_flag() const noexcept { return _flag; }
 	bool get_result() const noexcept { return _result; }
 	const answer::value_t& get_value() const noexcept { return _value; }
-
-	static constexpr auto& key_cmd() noexcept { return "cmd"; }
-	static constexpr auto& key_flag() noexcept { return "flag"; }
-	static constexpr auto& key_result() noexcept { return "result"; }
-	static constexpr auto& key_value() noexcept { return "value"; }
+	const std::vector<json_answer>& get_multiple() const noexcept { return _multiple; }
 
 	friend void from_json(const nlohmann::json& j, json_answer& e) {
-		caen::json::get_if_not_null(j, key_cmd(), e._cmd);
-		caen::json::get_if_not_null(j, key_result(), e._result);
-		caen::json::get_if_not_null(j, key_flag(), e._flag);
-		caen::json::get_if_not_null(j, key_value(), e._value);
+		caen::json::get_if_not_null(j, key_cmd, e._cmd);
+		caen::json::get_if_not_null(j, key_result, e._result);
+		caen::json::get_if_not_null(j, key_flag, e._flag);
+		caen::json::get_if_not_null(j, key_value, e._value);
+		caen::json::get_if_not_null(j, key_multiple, e._multiple);
 	}
 
 	friend void to_json(nlohmann::json& j, const json_answer& e) {
-		caen::json::set(j, key_cmd(), e._cmd);
-		caen::json::set(j, key_result(), e._result);
-		caen::json::set(j, key_flag(), e._flag);
-		caen::json::set(j, key_value(), e._value);
+		caen::json::set(j, key_cmd, e._cmd);
+		caen::json::set(j, key_result, e._result);
+		caen::json::set(j, key_flag, e._flag);
+		caen::json::set(j, key_value, e._value);
+		caen::json::set(j, key_multiple, e._multiple);
 	}
 
 private:
+
+	static constexpr auto key_cmd = "cmd"sv;
+	static constexpr auto key_flag = "flag"sv;
+	static constexpr auto key_result = "result"sv;
+	static constexpr auto key_value = "value"sv;
+	static constexpr auto key_multiple = "multiple"sv;
 
 	template <bool T>
 	static json_answer build_partial(cmd::command cmd) {
@@ -165,10 +256,19 @@ private:
 		return r;
 	}
 
+	template <bool T>
+	static json_answer build(cmd::command cmd, const std::function<std::vector<json_answer>()>& strategy) {
+		auto r = build_partial<T>(cmd);
+		if (strategy) // provider could be empty
+			r._multiple = strategy();
+		return r;
+	}
+
 	cmd::command _cmd;
 	bool _result;
 	answer::flag _flag;
 	answer::value_t _value;
+	std::vector<json_answer> _multiple; // requires C++17
 
 };
 

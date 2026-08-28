@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <type_traits>
 #include <utility>
 
@@ -71,12 +72,12 @@ struct base_hash_generator {
 	// base operator that stops just before the first null terminator
 	template <typename CharT>
 	constexpr UIntT operator()(const CharT* data) const noexcept {
-		return hash(Impl::offset_basis, data);
+		return hash(Impl::offset, data);
 	}
 	// base operator, no dereferences if size == 0 (null terminators processed if found)
 	template <typename CharT>
 	constexpr UIntT operator()(const CharT* data, std::size_t size) const noexcept {
-		return hash(Impl::offset_basis, data, size);
+		return hash(Impl::offset, data, size);
 	}
 	// base operator for nullptr, no dereferences if size == 0
 	constexpr UIntT operator()(std::nullptr_t data, std::size_t size) const noexcept {
@@ -85,7 +86,7 @@ struct base_hash_generator {
 	// base operator, no dereferences if begin == end (null terminators processed if found)
 	template <typename It>
 	constexpr UIntT operator()(It begin, It end) const {
-		return hash(Impl::offset_basis, begin, end);
+		return hash(Impl::offset, begin, end);
 	}
 	// operator wrapper for containers, strings and string views (null terminators processed if found)
 	// SFINAE required to select `const CharT*` overload when argument is `CharT*` or `CharT[]`
@@ -94,39 +95,47 @@ struct base_hash_generator {
 		return operator()(std::begin(c), std::end(c));
 	}
 private:
+	// convert character types to unsigned integer types without sign extension
+	template <typename CharT>
+	static constexpr UIntT safe_char_hash(UIntT value, CharT data) noexcept {
+		return Impl::char_hash(value, static_cast<UIntT>(static_cast<std::make_unsigned_t<CharT>>(data)));
+	}
 	// hash function that stops just before the first null terminator
 	template <typename CharT>
-	constexpr UIntT hash(UIntT value, const CharT* data) const noexcept {
+	static constexpr UIntT hash(UIntT value, const CharT* data) noexcept {
 		while (*data != '\0')
-			value = Impl::char_hash(value, *data++);
+			value = safe_char_hash(value, *data++);
 		return value;
 	}
 	// hash function, no dereferences if size == 0 (null terminators processed if found)
 	template <typename CharT>
-	constexpr UIntT hash(UIntT value, const CharT* data, std::size_t size) const noexcept {
+	static constexpr UIntT hash(UIntT value, const CharT* data, std::size_t size) noexcept {
 		for (; size != 0; --size)
-			value = Impl::char_hash(value, *data++);
+			value = safe_char_hash(value, *data++);
 		return value;
 	}
 	// hash function, no dereferences if begin == end (null terminators processed if found)
 	template <typename It>
-	constexpr UIntT hash(UIntT value, It begin, It end) const {
+	static constexpr UIntT hash(UIntT value, It begin, It end) {
 		while (begin != end)
-			value = Impl::char_hash(value, *begin++);
+			value = safe_char_hash(value, *begin++);
 		return value;
 	}
 };
 
 /**
- * @brief Hash using xor followed by product.
- * 
- * Implemented using `prime * (value ^ data)`.
+ * @brief Hash using xor followed by product and addition.
+ *
+ * Implemented using `prime * (value ^ data) + bias`.
  */
-template <typename UIntT, UIntT OffsetBasis, UIntT Prime>
-struct xor_product_impl : base_hash_generator<xor_product_impl<UIntT, OffsetBasis, Prime>, UIntT> {
-	static constexpr UIntT offset_basis{OffsetBasis};
+template <typename UIntT, UIntT Prime, UIntT Offset = UIntT{}, UIntT Bias = UIntT{}>
+struct xor_product_impl : base_hash_generator<xor_product_impl<UIntT, Prime, Offset, Bias>, UIntT> {
+	static constexpr UIntT offset{Offset};
 	static constexpr UIntT prime{Prime};
-	template <typename CharT> static constexpr UIntT char_hash(UIntT value, CharT data) noexcept { return prime * (value ^ data); }
+	static constexpr UIntT bias{Bias};
+	static constexpr UIntT char_hash(UIntT value, UIntT data) noexcept {
+		return prime * (value ^ data) + bias;
+	}
 };
 
 /**
@@ -134,11 +143,13 @@ struct xor_product_impl : base_hash_generator<xor_product_impl<UIntT, OffsetBasi
  *
  * Implemented using `(prime * value) ^ data`.
  */
-template <typename UIntT, UIntT OffsetBasis, UIntT Prime>
-struct product_xor_impl : base_hash_generator<product_xor_impl<UIntT, OffsetBasis, Prime>, UIntT> {
-	static constexpr UIntT offset_basis{OffsetBasis};
+template <typename UIntT, UIntT Prime, UIntT Offset = UIntT{}>
+struct product_xor_impl : base_hash_generator<product_xor_impl<UIntT, Prime, Offset>, UIntT> {
+	static constexpr UIntT offset{Offset};
 	static constexpr UIntT prime{Prime};
-	template <typename CharT> static constexpr UIntT char_hash(UIntT value, CharT data) noexcept { return (prime * value) ^ data; }
+	static constexpr UIntT char_hash(UIntT value, UIntT data) noexcept {
+		return (prime * value) ^ data;
+	}
 };
 
 /**
@@ -146,32 +157,64 @@ struct product_xor_impl : base_hash_generator<product_xor_impl<UIntT, OffsetBasi
  *
  * Implemented using `(prime * value) + data`.
  */
-template <typename UIntT, UIntT OffsetBasis, UIntT Prime>
-struct product_sum_impl : base_hash_generator<product_sum_impl<UIntT, OffsetBasis, Prime>, UIntT> {
-	static constexpr UIntT offset_basis{OffsetBasis};
+template <typename UIntT, UIntT Prime, UIntT Offset = UIntT{}>
+struct product_sum_impl : base_hash_generator<product_sum_impl<UIntT, Prime, Offset>, UIntT> {
+	static constexpr UIntT offset{Offset};
 	static constexpr UIntT prime{Prime};
-	template <typename CharT> static constexpr UIntT char_hash(UIntT value, CharT data) noexcept { return (prime * value) + data; }
+	static constexpr UIntT char_hash(UIntT value, UIntT data) noexcept {
+		return (prime * value) + data;
+	}
+};
+
+/**
+ * @brief Hash using PJW / ELF hash.
+ *
+ * Implemented using shift, xor and mask.
+ */
+template <typename UIntT>
+struct pjw_impl : base_hash_generator<pjw_impl<UIntT>, UIntT> {
+	static_assert(std::numeric_limits<UIntT>::digits % 8 == 0, "UIntT must have a bit width divisible by 8");
+	static constexpr UIntT offset{0};
+	static constexpr UIntT shift{std::numeric_limits<UIntT>::digits / 8};
+	static constexpr UIntT high_shift{std::numeric_limits<UIntT>::digits - shift};
+	static constexpr UIntT fold_shift{std::numeric_limits<UIntT>::digits * 3 / 4};
+	static constexpr UIntT high_mask{std::numeric_limits<UIntT>::max() << high_shift};
+	static constexpr UIntT char_hash(UIntT value, UIntT data) noexcept {
+		value <<= shift;
+		value += data;
+		const UIntT high = value & high_mask;
+		if (high != 0) {
+			value ^= (high >> fold_shift);
+			value &= ~high;
+		}
+		return value;
+	}
 };
 
 /**
 * @defgroup HashAlgorithms Hash algorithm
-* @brief Hash algorithms that can be easily implemented with xor+product, product+xor and product+sum.
+ * @brief Hash algorithms implemented in this header.
 * 
-* Definition of every known and documented hash algorithms that can be implemented
-*   using one of @ref xor_product_impl, @ref product_xor_impl and @ref product_sum_impl.
+ * Definition of the known non-cryptographic hash algorithms that fit the current
+ *   header-only utility layer.
 * 
 * @{ */
-using fnv0_32 = product_xor_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x1000193}>;		//!< 32-bit FNV-0. @warning Not good, used only to compute FNV-1 offset basis.
-using fnv0_64 = product_xor_impl<std::uint64_t, std::uint64_t{0x0}, std::uint64_t{0x100000001b3}>;	//!< 64-bit FNV-0. @warning Not good, used only to compute FNV-1 offset basis.
-using fnv1_32 = product_xor_impl<std::uint32_t, std::uint32_t{0x811c9dc5}, fnv0_32::prime>;			//!< 32-bit FNV-1.
-using fnv1_64 = product_xor_impl<std::uint64_t, std::uint64_t{0xcbf29ce484222325}, fnv0_64::prime>;	//!< 64-bit FNV-1.
-using fnv1a_32 = xor_product_impl<std::uint32_t, fnv1_32::offset_basis, fnv0_32::prime>;			//!< 32-bit FNV-1a.
-using fnv1a_64 = xor_product_impl<std::uint64_t, fnv1_64::offset_basis, fnv0_64::prime>;			//!< 64-bit FNV-1a.
-using djb2 = product_sum_impl<std::uint32_t, std::uint32_t{0x1505}, std::uint32_t{0x21}>;			//!< 32-bit DJB2.
-using djb2a = product_xor_impl<std::uint32_t, djb2::offset_basis, djb2::prime>;						//!< 32-bit DJB2a.
-using sdbm = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x1003f}>;			//!< 32-bit SDBM hash algorithm.
-using bkdr = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x83}>;				//!< 32-bit BKDR.
-using lose_lose = product_sum_impl<std::uint32_t, std::uint32_t{0x0}, std::uint32_t{0x1}>;			//!< 32-bit lose-lose from K&R (1st ed). @warning Extremely simple, terrible hashing.
+using fnv0_32 = product_xor_impl<std::uint32_t, 0x1000193>;								//!< 32-bit FNV-0. @warning Not good, used only to compute FNV-1 offset basis.
+using fnv0_64 = product_xor_impl<std::uint64_t, 0x100000001b3>;							//!< 64-bit FNV-0. @warning Not good, used only to compute FNV-1 offset basis.
+using fnv1_32 = product_xor_impl<std::uint32_t, fnv0_32::prime, 0x811c9dc5>;			//!< 32-bit FNV-1.
+using fnv1_64 = product_xor_impl<std::uint64_t, fnv0_64::prime, 0xcbf29ce484222325>;	//!< 64-bit FNV-1.
+using fnv1a_32 = xor_product_impl<std::uint32_t, fnv0_32::prime, fnv1_32::offset>;		//!< 32-bit FNV-1a.
+using fnv1a_64 = xor_product_impl<std::uint64_t, fnv0_64::prime, fnv1_64::offset>;		//!< 64-bit FNV-1a.
+using pearson = xor_product_impl<std::uint8_t, 0xa7, 0x0, 0xd>;							//!< 8-bit Pearson.
+using djb2 = product_sum_impl<std::uint32_t, 0x21, 0x1505>;								//!< 32-bit DJB2.
+using djb2a = product_xor_impl<std::uint32_t, djb2::prime, djb2::offset>;				//!< 32-bit DJB2a.
+using sdbm = product_sum_impl<std::uint32_t, 0x1003f>;									//!< 32-bit SDBM.
+using bkdr = product_sum_impl<std::uint32_t, 0x83>;										//!< 32-bit BKDR.
+using lose_lose = product_sum_impl<std::uint32_t, 0x1>;									//!< 32-bit lose-lose from K&R (1st ed). @warning Extremely simple, terrible hashing.
+using java = product_sum_impl<std::uint32_t, 0x1f>;										//!< 32-bit Java String hashCode.
+using larson = product_sum_impl<std::uint32_t, 0x65>;									//!< 32-bit Paul Larson.
+using pjw_32 = pjw_impl<std::uint32_t>;													//!< 32-bit PJW / ELF.
+using pjw_64 = pjw_impl<std::uint64_t>;													//!< 64-bit PJW / ELF.
 /** @} */
 
 namespace sanity_checks {
@@ -182,15 +225,20 @@ template <typename... Args>
 constexpr bool hello_word_consistency(Args&&... args) noexcept {
 	// sanity checks with hello world of CharT type
 	bool ret{true};
-	ret &= (fnv1_32{}(std::forward<Args>(args)...) == std::uint32_t{0x548da96f});
-	ret &= (fnv1_64{}(std::forward<Args>(args)...) == std::uint64_t{0x7dcf62cdb1910e6f});
-	ret &= (fnv1a_32{}(std::forward<Args>(args)...) == std::uint32_t{0xd58b3fa7});
-	ret &= (fnv1a_64{}(std::forward<Args>(args)...) == std::uint64_t{0x779a65e7023cd2e7});
-	ret &= (djb2{}(std::forward<Args>(args)...) == std::uint32_t{0x3551c8c1});
-	ret &= (djb2a{}(std::forward<Args>(args)...) == std::uint32_t{0xf8c65345});
-	ret &= (sdbm{}(std::forward<Args>(args)...) == std::uint32_t{0x19ae84c4});
-	ret &= (bkdr{}(std::forward<Args>(args)...) == std::uint32_t{0x4e195644});
-	ret &= (lose_lose{}(std::forward<Args>(args)...) == std::uint32_t{0x45c});
+	ret &= (fnv1_32{}(std::forward<Args>(args)...) == 0x548da96f);
+	ret &= (fnv1_64{}(std::forward<Args>(args)...) == 0x7dcf62cdb1910e6f);
+	ret &= (fnv1a_32{}(std::forward<Args>(args)...) == 0xd58b3fa7);
+	ret &= (fnv1a_64{}(std::forward<Args>(args)...) == 0x779a65e7023cd2e7);
+	ret &= (pearson{}(std::forward<Args>(args)...) == 0x19);
+	ret &= (djb2{}(std::forward<Args>(args)...) == 0x3551c8c1);
+	ret &= (djb2a{}(std::forward<Args>(args)...) == 0xf8c65345);
+	ret &= (sdbm{}(std::forward<Args>(args)...) == 0x19ae84c4);
+	ret &= (bkdr{}(std::forward<Args>(args)...) == 0x4e195644);
+	ret &= (lose_lose{}(std::forward<Args>(args)...) == 0x45c);
+	ret &= (java{}(std::forward<Args>(args)...) == 0x6aefe2c4);
+	ret &= (larson{}(std::forward<Args>(args)...) == 0x496f954c);
+	ret &= (pjw_32{}(std::forward<Args>(args)...) == 0x0114ac14);
+	ret &= (pjw_64{}(std::forward<Args>(args)...) == 0x006f201f0a1e0064);
 	return ret;
 }
 
@@ -201,8 +249,8 @@ constexpr bool test_hash_utils_1() noexcept {
 	// see http://www.isthe.com/chongo/tech/comp/fnv/index.html
 	bool ret{true};
 	const char chongo[] = R"(chongo <Landon Curt Noll> /\../\)";
-	ret &= (fnv0_32{}(chongo) == fnv1_32::offset_basis);
-	ret &= (fnv0_64{}(chongo) == fnv1_64::offset_basis);
+	ret &= (fnv0_32{}(chongo) == fnv1_32::offset);
+	ret &= (fnv0_64{}(chongo) == fnv1_64::offset);
 	return ret;
 }
 constexpr bool test_hash_utils_2() noexcept {
@@ -252,6 +300,18 @@ constexpr bool test_hash_utils_2() noexcept {
 	ret &= (!fnv1a_64{}("QvXtM>@Fp%"));
 	ret &= (!fnv1a_64{}("_\"kWk=-v$c"));
 	ret &= (!fnv1a_64{}("77kepQFQ8Kl"));
+	ret &= (!java{}("pollinating sandboxes"));
+	ret &= (!java{}("Airlia unhallow"));
+	ret &= (!java{}("amusement & hemophilias"));
+	ret &= (!java{}("schoolworks = perversive"));
+	ret &= (!java{}("electrolysissweeteners.net"));
+	ret &= (!java{}("constitutionalunstableness.net"));
+	ret &= (!java{}("grinnerslaphappier.org"));
+	ret &= (!java{}("BLEACHINGFEMININELY.NET"));
+	ret &= (!java{}("WWW.BUMRACEGOERS.ORG"));
+	ret &= (!java{}("WWW.RACCOONPRUDENTIALS.NET"));
+	ret &= (!java{}("Microcomputers: the unredeemed lollipop..."));
+	ret &= (!java{}("Incentively, my dear, I don't tessellate a derangement."));
 	return ret;
 }
 constexpr bool test_hash_utils_3() noexcept {
@@ -262,6 +322,7 @@ constexpr bool test_hash_utils_3() noexcept {
 	ret &= (fnv1a_32{}("costarring") == fnv1a_32{}("liquid"));
 	ret &= (fnv1a_32{}("declinate") == fnv1a_32{}("macallums"));
 	ret &= (fnv1a_32{}("altarage") == fnv1a_32{}("zinke"));
+	ret &= (pearson{}("of") == pearson{}("up"));
 	ret &= (djb2{}("ar") == djb2{}("c0"));
 	ret &= (djb2{}("hetairas") == djb2{}("mentioner"));
 	ret &= (djb2{}("heliotropes") == djb2{}("neurospora"));
@@ -276,6 +337,15 @@ constexpr bool test_hash_utils_3() noexcept {
 	ret &= (djb2a{}("playwright") == djb2a{}("snush"));
 	ret &= (djb2a{}("adorablenesses") == djb2a{}("rentability"));
 	ret &= (djb2a{}("treponematoses") == djb2a{}("waterbeds"));
+	ret &= (java{}("Siblings") == java{}("Teheran"));
+	ret &= (java{}("misused") == java{}("horsemints"));
+	ret &= (java{}("isohel") == java{}("epistolaries"));
+	ret &= (java{}("righto") == java{}("buzzards"));
+	ret &= (java{}("hierarch") == java{}("crinolines"));
+	ret &= (java{}("inwork") == java{}("hypercatalexes"));
+	ret &= (java{}("wainages") == java{}("presentencing"));
+	ret &= (java{}("trichothecenes") == java{}("locular"));
+	ret &= (java{}("pomatoes") == java{}("eructation"));
 	return ret;
 }
 constexpr bool test_hash_utils_4() noexcept {
@@ -301,31 +371,41 @@ constexpr bool test_hash_utils_5() noexcept {
 	// sanity checks for empty strings
 	bool ret{true};
 	const char empty[] = "";
-	ret &= (fnv0_32{}(empty) == fnv0_32::offset_basis);
-	ret &= (fnv0_64{}(empty) == fnv0_64::offset_basis);
-	ret &= (fnv1_32{}(empty) == fnv1_32::offset_basis);
-	ret &= (fnv1_64{}(empty) == fnv1_64::offset_basis);
-	ret &= (fnv1a_32{}(empty) == fnv1a_32::offset_basis);
-	ret &= (fnv1a_64{}(empty) == fnv1a_64::offset_basis);
-	ret &= (djb2{}(empty) == djb2::offset_basis);
-	ret &= (djb2a{}(empty) == djb2a::offset_basis);
-	ret &= (sdbm{}(empty) == sdbm::offset_basis);
-	ret &= (lose_lose{}(empty) == lose_lose::offset_basis);
+	ret &= (fnv0_32{}(empty) == fnv0_32::offset);
+	ret &= (fnv0_64{}(empty) == fnv0_64::offset);
+	ret &= (fnv1_32{}(empty) == fnv1_32::offset);
+	ret &= (fnv1_64{}(empty) == fnv1_64::offset);
+	ret &= (fnv1a_32{}(empty) == fnv1a_32::offset);
+	ret &= (fnv1a_64{}(empty) == fnv1a_64::offset);
+	ret &= (pearson{}(empty) == pearson::offset);
+	ret &= (djb2{}(empty) == djb2::offset);
+	ret &= (djb2a{}(empty) == djb2a::offset);
+	ret &= (sdbm{}(empty) == sdbm::offset);
+	ret &= (lose_lose{}(empty) == lose_lose::offset);
+	ret &= (java{}(empty) == java::offset);
+	ret &= (larson{}(empty) == larson::offset);
+	ret &= (pjw_32{}(empty) == pjw_32::offset);
+	ret &= (pjw_64{}(empty) == pjw_64::offset);
 	return ret;
 }
 constexpr bool test_hash_utils_6() noexcept {
 	// sanity checks for null pointers with zero size (no dereferences using hash)
 	bool ret{true};
-	ret &= (fnv0_32{}(nullptr, 0) == fnv0_32::offset_basis);
-	ret &= (fnv0_64{}(nullptr, 0) == fnv0_64::offset_basis);
-	ret &= (fnv1_32{}(nullptr, 0) == fnv1_32::offset_basis);
-	ret &= (fnv1_64{}(nullptr, 0) == fnv1_64::offset_basis);
-	ret &= (fnv1a_32{}(nullptr, 0) == fnv1a_32::offset_basis);
-	ret &= (fnv1a_64{}(nullptr, 0) == fnv1a_64::offset_basis);
-	ret &= (djb2{}(nullptr, 0) == djb2::offset_basis);
-	ret &= (djb2a{}(nullptr, 0) == djb2a::offset_basis);
-	ret &= (sdbm{}(nullptr, 0) == sdbm::offset_basis);
-	ret &= (lose_lose{}(nullptr, 0) == lose_lose::offset_basis);
+	ret &= (fnv0_32{}(nullptr, 0) == fnv0_32::offset);
+	ret &= (fnv0_64{}(nullptr, 0) == fnv0_64::offset);
+	ret &= (fnv1_32{}(nullptr, 0) == fnv1_32::offset);
+	ret &= (fnv1_64{}(nullptr, 0) == fnv1_64::offset);
+	ret &= (fnv1a_32{}(nullptr, 0) == fnv1a_32::offset);
+	ret &= (fnv1a_64{}(nullptr, 0) == fnv1a_64::offset);
+	ret &= (pearson{}(nullptr, 0) == pearson::offset);
+	ret &= (djb2{}(nullptr, 0) == djb2::offset);
+	ret &= (djb2a{}(nullptr, 0) == djb2a::offset);
+	ret &= (sdbm{}(nullptr, 0) == sdbm::offset);
+	ret &= (lose_lose{}(nullptr, 0) == lose_lose::offset);
+	ret &= (java{}(nullptr, 0) == java::offset);
+	ret &= (larson{}(nullptr, 0) == larson::offset);
+	ret &= (pjw_32{}(nullptr, 0) == pjw_32::offset);
+	ret &= (pjw_64{}(nullptr, 0) == pjw_64::offset);
 	return ret;
 }
 
@@ -345,10 +425,15 @@ using detail::fnv1_32;
 using detail::fnv1_64;
 using detail::fnv1a_32;
 using detail::fnv1a_64;
+using detail::pearson;
 using detail::djb2;
 using detail::djb2a;
 using detail::sdbm;
 using detail::lose_lose;
+using detail::java;
+using detail::larson;
+using detail::pjw_32;
+using detail::pjw_64;
 
 using generator = fnv1a_64;						//!< Set default hash generator for string to @ref caen::hash::detail::fnv1a_64
 using default_hash_generator = generator;		//!< Legacy alias

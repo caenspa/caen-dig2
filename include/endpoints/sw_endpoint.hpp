@@ -38,6 +38,7 @@
 #define CAEN_INCLUDE_ENDPOINTS_SW_ENDPOINT_HPP_
 
 #include <cstddef>
+#include <exception>
 #include <memory>
 
 #include "cpp-utility/bit.hpp"
@@ -58,6 +59,9 @@ struct sw_endpoint : public endpoint {
 	virtual void resize() = 0;
 	virtual void decode(const std::byte* p, std::size_t size) = 0;
 	virtual void stop() = 0;
+
+	// propagate an error from a re-reading thread to readers blocked on this endpoint's buffer
+	virtual void notify_error(std::exception_ptr e) = 0;
 
 protected:
 	// common stuff used to decode

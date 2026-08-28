@@ -98,6 +98,8 @@ struct client : private boost::noncopyable {
 	std::pair<std::string, ::CAEN_FELib_NodeType_t> get_node_properties(handle::internal_handle_t handle, const std::string& path);
 	std::string get_value(handle::internal_handle_t handle, const std::string& path, const std::string& arg = std::string{});
 	void set_value(handle::internal_handle_t handle, const std::string& path, const std::string& value);
+	std::vector<multi_result> set_values(handle::internal_handle_t handle, const std::vector<std::string>& paths, const std::vector<std::string>& values);
+	std::vector<multi_result> get_values(handle::internal_handle_t handle, const std::vector<std::string>& paths);
 	void send_command(handle::internal_handle_t handle, const std::string& path);
 	std::uint32_t get_user_register(handle::internal_handle_t handle, std::uint32_t address);
 	void set_user_register(handle::internal_handle_t handle, std::uint32_t address, std::uint32_t value);

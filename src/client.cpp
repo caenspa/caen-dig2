@@ -76,6 +76,7 @@
 #include "cpp-utility/serdes.hpp"
 #include "cpp-utility/socket_option.hpp"
 #include "cpp-utility/string.hpp"
+#include "cpp-utility/to_underlying.hpp"
 #include "endpoints/dpppha.hpp"
 #include "endpoints/dpppsd.hpp"
 #include "endpoints/dppzle.hpp"
@@ -223,6 +224,7 @@ struct client::client_impl {
 	, _endpoint_address{}
 	, _digitizer_internal_handle{}
 	, _server_version_aligned{false}
+	, _protocol_version{cmd::protocol::v0}
 	, _endpoint_list{}
 	, _user_register_path{"/par/registeruser"s}
 	, _n_channels{} {
@@ -235,6 +237,16 @@ struct client::client_impl {
 			const auto keep_cnt = _url_data._keep_cnt.value_or(default_keep_cnt);
 			_socket.set_option(caen::socket_option::keep_cnt{keep_cnt});
 			_logger->info("TCP keep alive enabled (interval={}s, cnt={})", keep_interval, keep_cnt);
+		}
+
+		// Disable Nagle's algorithm: the command channel is a strict request/response, and Nagle
+		// interacting with delayed ACKs adds large per-round-trip latency (especially over USB RNDIS/CDC).
+		try {
+			_socket.set_option(boost::asio::ip::tcp::no_delay{true});
+			_logger->info("TCP no delay enabled");
+		}
+		catch (const std::exception& ex) {
+			_logger->warn("could not enable TCP no delay: {}", ex.what());
 		}
 
 		if (_cmd_timeout != decltype(_cmd_timeout)::zero())
@@ -260,6 +272,8 @@ struct client::client_impl {
 			constexpr auto server_definitions_version_major_minor{server_definitions::version / patch_size};
 			const auto server_version_major_minor = server_version / patch_size;
 			_server_version_aligned = (server_version_major_minor <= server_definitions_version_major_minor);
+			if (server_version >= 10500)
+				_protocol_version = cmd::protocol::v1;
 		}
 
 		// fill constants
@@ -462,6 +476,35 @@ struct client::client_impl {
 		}
 	}
 
+	std::vector<multi_result> set_values(handle::internal_handle_t handle, const std::vector<std::string>& paths, const std::vector<std::string>& values) {
+		BOOST_ASSERT_MSG(paths.size() == values.size(), "paths and values must have the same size");
+		std::vector<json_cmd> subs;
+		subs.reserve(paths.size());
+		for (std::size_t i = 0; i < paths.size(); ++i)
+			subs.push_back(json_cmd::build(cmd::command::SET_VALUE, handle, paths[i], values[i]));
+		return send_multiple(handle, subs);
+	}
+
+	std::vector<multi_result> get_values(handle::internal_handle_t handle, const std::vector<std::string>& paths) {
+		std::vector<json_cmd> subs;
+		subs.reserve(paths.size());
+		for (const auto& path : paths)
+			subs.push_back(json_cmd::build(cmd::command::GET_VALUE, handle, path, std::string{}));
+		return send_multiple(handle, subs);
+	}
+
+	std::vector<multi_result> send_multiple(handle::internal_handle_t handle, const std::vector<json_cmd>& subs) {
+		const auto envelope = json_cmd::build_multiple(handle, subs);
+		const auto ans = send(envelope);
+		std::vector<multi_result> res;
+		res.reserve(ans.get_multiple().size());
+		for (const auto& sub_ans : ans.get_multiple()) {
+			const auto& value = sub_ans.get_value();
+			res.push_back(multi_result{ sub_ans.get_result(), value.empty() ? std::string{} : value.front() });
+		}
+		return res;
+	}
+
 	std::uint32_t get_user_register(handle::internal_handle_t handle, std::uint32_t address) {
 		if (handle != _digitizer_internal_handle)
 			throw "get_user_register must me invoked on digitizer handle"_ex;
@@ -642,17 +685,50 @@ private:
 		return ep;
 	}
 
+	template <cmd::protocol P>
+	json_answer send_impl(const json_cmd& cmd) {
+		throw ex::not_yet_implemented(fmt::format("send_impl not implemented for protocol version {}", caen::to_underlying(P)));
+	}
+
 	json_answer send(const json_cmd& cmd) try {
 
 		SPDLOG_LOGGER_DEBUG(_logger, R"(sending {}({}, "{}", "{}"))", caen::json::to_json_string(cmd.get_cmd()), cmd.get_handle(), cmd.get_query(), cmd.get_value());
 
+		json_answer res = [this, &cmd]() {
+			switch (_protocol_version) {
+			case cmd::protocol::v0: return send_impl_v0(cmd);
+			case cmd::protocol::v1: return send_impl_v1(cmd);
+			default: throw ex::runtime_error(fmt::format("unknown protocol version: {}", caen::to_underlying(_protocol_version)));
+			}
+		}();
+
+		// process request
+		BOOST_ASSERT_MSG(res.get_cmd() == cmd.get_cmd(), "unexpected command type on reply");
+		if (!res.get_result()) {
+			const auto error_message = fmt::format("digitizer error: {}", fmt::join(res.get_value(), " "));
+			_logger->error(error_message);
+			throw ex::command_error(error_message);
+		}
+
+		return res;
+
+	}
+	catch (const nlohmann::json::exception& ex) {
+		throw ex::command_error(fmt::format("JSON error: {}", ex.what()));
+	}
+	catch (const boost::system::system_error& ex) {
+		throw ex::communication_error(fmt::format("Boost ASIO error: {}", ex.what()));
+	}
+
+	json_answer send_impl_v0(const json_cmd& cmd) {
 		std::array<std::byte, server_definitions::header_size> header_buffer{};
 
 		// generate request
 		auto b_it = header_buffer.begin();
 		const auto request_string = cmd.unmarshal();
 		caen::serdes::serialize<std::uint64_t>(b_it, request_string.size());
-		BOOST_ASSERT_MSG(b_it <= header_buffer.end(), "inconsistent header decoding");
+		caen::serdes::serialize<cmd::protocol>(b_it, cmd::protocol::v0);
+		BOOST_ASSERT_MSG(b_it <= header_buffer.end(), "inconsistent header encoding");
 
 		// send request
 		const std::array<boost::asio::const_buffer, 2> buffers{
@@ -668,10 +744,15 @@ private:
 		read(boost::asio::buffer(header_buffer));
 
 		auto b_const_it = header_buffer.cbegin();
-		auto size = caen::serdes::deserialize<std::uint64_t>(b_const_it);
+		const auto size = caen::serdes::deserialize<std::uint64_t>(b_const_it);
+		const auto protocol = caen::serdes::deserialize<cmd::protocol>(b_const_it);
+
 		BOOST_ASSERT_MSG(b_const_it <= header_buffer.cend(), "inconsistent header decoding");
 
 		SPDLOG_LOGGER_DEBUG(_logger, "reply received (size={})", size);
+
+		if (protocol != cmd::protocol::v0)
+			throw ex::communication_error(fmt::format("unexpected protocol version in reply: {}", caen::to_underlying(protocol)));
 
 		// check size and throw exception if overflow (should apply only for 32-bit builds)
 		const auto required_size = boost::numeric_cast<std::size_t>(size);
@@ -684,21 +765,53 @@ private:
 
 		// process request
 		std::istream reply_stream(&reply_buffer);
-		auto res = json_answer::marshal(reply_stream);
-		BOOST_ASSERT_MSG(res.get_cmd() == cmd.get_cmd(), "unexpected command type on reply");
-		if (!res.get_result()) {
-			const auto error_message = fmt::format("digitizer error: {}", fmt::join(res.get_value(), " "));
-			_logger->error(error_message);
-			throw ex::command_error(error_message);
-		}
+		return json_answer::marshal(reply_stream);
+	}
 
-		return res;
-	}
-	catch (const nlohmann::json::exception& ex) {
-		throw ex::command_error(fmt::format("JSON error: {}", ex.what()));
-	}
-	catch (const boost::system::system_error& ex) {
-		throw ex::communication_error(fmt::format("Boost ASIO error: {}", ex.what()));
+	json_answer send_impl_v1(const json_cmd& cmd) {
+		std::array<std::byte, server_definitions::header_size> header_buffer{};
+
+		// generate request
+		auto b_it = header_buffer.begin();
+		const auto request_vector = cmd.to_binary();
+		caen::serdes::serialize<std::uint64_t>(b_it, request_vector.size());
+		caen::serdes::serialize<cmd::protocol>(b_it, cmd::protocol::v1);
+		BOOST_ASSERT_MSG(b_it <= header_buffer.end(), "inconsistent header encoding");
+
+		// send request
+		const std::array<boost::asio::const_buffer, 2> buffers{
+			boost::asio::buffer(header_buffer),
+			boost::asio::buffer(request_vector)
+		};
+
+		std::unique_lock lk{ _mtx };
+
+		boost::asio::write(_socket, buffers);
+
+		// read header
+		boost::asio::read(_socket, boost::asio::buffer(header_buffer));
+
+		auto b_const_it = header_buffer.cbegin();
+		const auto size = caen::serdes::deserialize<std::uint64_t>(b_const_it);
+		const auto protocol = caen::serdes::deserialize<cmd::protocol>(b_const_it);
+		BOOST_ASSERT_MSG(b_const_it <= header_buffer.cend(), "inconsistent header decoding");
+
+		SPDLOG_LOGGER_DEBUG(_logger, "reply received (size={})", size);
+
+		if (protocol != cmd::protocol::v1)
+			throw ex::communication_error(fmt::format("unexpected protocol version in reply: {}", caen::to_underlying(protocol)));
+
+		// check size and throw exception if overflow (should apply only for 32-bit builds)
+		const auto required_size = boost::numeric_cast<std::size_t>(size);
+
+		// read data
+		caen::vector<std::byte> reply_data(required_size);
+		boost::asio::read(_socket, boost::asio::buffer(reply_data));
+
+		lk.unlock();
+
+		// process reply
+		return json_answer::from_binary(reply_data);
 	}
 
 	template <typename String>
@@ -755,6 +868,7 @@ private:
 	boost::asio::ip::address _endpoint_address;
 	handle::internal_handle_t _digitizer_internal_handle;
 	bool _server_version_aligned;
+	cmd::protocol _protocol_version;
 	std::list<std::shared_ptr<ep::endpoint>> _endpoint_list;
 	const std::string _user_register_path;
 	std::size_t _n_channels;
@@ -901,6 +1015,14 @@ std::string client::get_value(handle::internal_handle_t handle, const std::strin
 
 void client::set_value(handle::internal_handle_t handle, const std::string& path, const std::string& value) {
 	_pimpl->set_value(handle, path, value);
+}
+
+std::vector<multi_result> client::set_values(handle::internal_handle_t handle, const std::vector<std::string>& paths, const std::vector<std::string>& values) {
+	return _pimpl->set_values(handle, paths, values);
+}
+
+std::vector<multi_result> client::get_values(handle::internal_handle_t handle, const std::vector<std::string>& paths) {
+	return _pimpl->get_values(handle, paths);
 }
 
 void client::send_command(handle::internal_handle_t handle, const std::string& path) {

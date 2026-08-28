@@ -15,7 +15,7 @@
 *	License as published by the Free Software Foundation; either
 *	version 3 of the License, or (at your option) any later version.
 *
-*	TheCAEN Back-end Server is distributed in the hope that it will be useful,
+*	The CAEN Back-end Server is distributed in the hope that it will be useful,
 *	but WITHOUT ANY WARRANTY; without even the implied warranty of
 *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 *	Lesser General Public License for more details.
@@ -41,8 +41,8 @@
 #define BACKEND_SERVER_STR(S)			BACKEND_SERVER_STR_HELPER(S)
 
 #define BACKEND_SERVER_VERSION_MAJOR	1
-#define BACKEND_SERVER_VERSION_MINOR	4
-#define BACKEND_SERVER_VERSION_PATCH	2
+#define BACKEND_SERVER_VERSION_MINOR	5
+#define BACKEND_SERVER_VERSION_PATCH	0
 #define BACKEND_SERVER_VERSION			(BACKEND_SERVER_VERSION_MAJOR * 10000) + (BACKEND_SERVER_VERSION_MINOR * 100) + (BACKEND_SERVER_VERSION_PATCH)
 #define BACKEND_SERVER_VERSION_STRING	BACKEND_SERVER_STR(BACKEND_SERVER_VERSION_MAJOR) "." BACKEND_SERVER_STR(BACKEND_SERVER_VERSION_MINOR) "." BACKEND_SERVER_STR(BACKEND_SERVER_VERSION_PATCH)
 

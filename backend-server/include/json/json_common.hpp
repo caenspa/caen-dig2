@@ -15,7 +15,7 @@
 *	License as published by the Free Software Foundation; either
 *	version 3 of the License, or (at your option) any later version.
 *
-*	TheCAEN Back-end Server is distributed in the hope that it will be useful,
+*	The CAEN Back-end Server is distributed in the hope that it will be useful,
 *	but WITHOUT ANY WARRANTY; without even the implied warranty of
 *	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
 *	Lesser General Public License for more details.
@@ -51,6 +51,11 @@ struct json_answer; // forward declaration
 
 namespace cmd {
 
+enum class protocol : std::uint8_t {
+	v0 = 0,
+	v1 = 1,
+};
+
 enum class command {
 	UNKNOWN,
 	CONNECT,
@@ -61,17 +66,14 @@ enum class command {
 	GET_PATH,
 	GET_NODE_PROPERTIES,
 	GET_VALUE,
-	MULTI_GET_VALUE,
 	SET_VALUE,
-	MULTI_SET_VALUE,
 	SEND_COMMAND,
+	MULTIPLE,
 };
 
 using handle_t = std::uint32_t;
 using query_t = std::string;
-using multiple_query_t = std::vector<query_t>;
 using value_t = std::string;
-using multiple_value_t = std::vector<value_t>;
 
 static constexpr std::size_t handle_bits{24};
 static constexpr handle_t max_handle{(handle_t{1} << handle_bits) - 1}; // reserved use

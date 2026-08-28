@@ -111,8 +111,8 @@ struct dpppha::endpoint_impl {
 
 dpppha::dpppha(client& client, handle::internal_handle_t endpoint_handle)
 	: aggregate_endpoint(client, endpoint_handle)
-	, _pimpl{std::make_unique<endpoint_impl>(client.get_sampling_period_ns())}
-	, _stats_ep{std::make_shared<stats>(client, client.get_handle(endpoint_handle, "/stats"))} {
+	, _stats_ep{std::make_shared<stats>(client, client.get_handle(endpoint_handle, "/stats"))}
+	, _pimpl{std::make_unique<endpoint_impl>(client.get_sampling_period_ns())} {
 
 	get_client().register_endpoint(_stats_ep);
 
@@ -314,6 +314,7 @@ void dpppha::decode_hit(const std::byte*& p) {
 						case s_ed::analog_probe::type::energy_filter_baseline:			return dpp_analog_probe_type::energy_filter_baseline;
 						case s_ed::analog_probe::type::energy_filter_minus_baseline:	return dpp_analog_probe_type::energy_filter_minus_baseline;
 						case s_ed::analog_probe::type::adc_input_16bit:					return dpp_analog_probe_type::adc_input_16bit;
+						case s_ed::analog_probe::type::pha_cfd_filter:					return dpp_analog_probe_type::pha_cfd_filter;
 						default:														return dpp_analog_probe_type::unknown;
 						}
 					}(probe._type);
@@ -347,6 +348,7 @@ void dpppha::decode_hit(const std::byte*& p) {
 						case s_ed::digital_probe::type::energy_filter_saturation:		return dpp_digital_probe_type::energy_filter_saturation;
 						case s_ed::digital_probe::type::signal_inhibit:					return dpp_digital_probe_type::signal_inhibit;
 						case s_ed::digital_probe::type::coincidence_anticoincidence:	return dpp_digital_probe_type::coincidence_anticoincidence;
+						case s_ed::digital_probe::type::pha_cfd_filter_armed:			return dpp_digital_probe_type::pha_cfd_filter_armed;
 						default:														return dpp_digital_probe_type::unknown;
 						}
 					}(probe._type);
@@ -725,6 +727,11 @@ void dpppha::clear_data() {
 	require_clear();
 	_pimpl->_buffer.invalidate_buffers();
 	_stats_ep->clear_data();
+}
+
+void dpppha::notify_error(std::exception_ptr e) {
+	// stats endpoint reads are non-blocking, only the hit buffer can leave a reader stuck
+	_pimpl->_buffer.set_error(std::move(e));
 }
 
 struct dpppha::stats::endpoint_impl {

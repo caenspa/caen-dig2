@@ -571,9 +571,21 @@ private:
 
 	}
 	catch (const std::exception& ex) {
-		_logger->critical("receiver critical error: {}", ex.what());
-		_logger->flush();
-		std::terminate();
+		/*
+		 * Do not crash: close the thread gracefully and surface the error to the user on the
+		 * next read_data/has_data. Recovery from a receiver failure requires reconnecting to
+		 * the device.
+		 */
+		_logger->error("receiver thread stopped due to an error: {}", ex.what());
+		const auto msg = fmt::format("receiver thread stopped due to an error: {}. Reconnect to the device to recover.", ex.what());
+		const auto eptr = std::make_exception_ptr(ex::runtime_error(msg));
+		/*
+		 * Order matters: claim the software endpoint buffers (decoded-mode readers) before
+		 * _buffer, since set_error on _buffer is what wakes the decoder (set_error is first-wins).
+		 */
+		for (auto& ep : _sw_ep_list)
+			ep->notify_error(eptr);
+		_buffer.set_error(eptr);
 	}
 
 	void do_read(std::size_t bytes_transferred) {
@@ -699,9 +711,16 @@ private:
 
 	}
 	catch (const std::exception& ex) {
-		_logger->critical("decoder critical error: {}", ex.what());
-		_logger->flush();
-		std::terminate();
+		/*
+		 * Do not crash: close the thread gracefully and surface the error to the user on the
+		 * next read_data/has_data. The decoder is recreated on arm_acquisition, so re-arming
+		 * recovers.
+		 */
+		_logger->error("decoder thread stopped due to an error: {}", ex.what());
+		const auto msg = fmt::format("decoder thread stopped due to an error: {}. Re-arm the acquisition to recover.", ex.what());
+		const auto eptr = std::make_exception_ptr(ex::runtime_error(msg));
+		for (auto& ep : _sw_ep_list)
+			ep->notify_error(eptr);
 	}
 
 	void decoder_loop() {

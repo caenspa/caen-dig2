@@ -587,6 +587,10 @@ void dppzle::clear_data() {
 	_pimpl->_buffer.invalidate_buffers();
 }
 
+void dppzle::notify_error(std::exception_ptr e) {
+	_pimpl->_buffer.set_error(std::move(e));
+}
+
 } // namespace ep
 
 } // namespace dig2

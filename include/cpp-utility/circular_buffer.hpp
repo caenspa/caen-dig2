@@ -44,6 +44,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <stdexcept>
+#include <exception>
 
 #include <boost/predef/compiler.h>
 #include <boost/predef/other/workaround.h>
@@ -54,6 +55,21 @@
 
 namespace caen {
 
+/*!
+ * @brief Thread-safe fixed-capacity circular buffer for producer-consumer data exchange.
+ *
+ * Designed for single-producer single-reader use in DAQ pipelines. Provides blocking
+ * reads (with or without timeout) and non-blocking writes. Supervisor calls
+ * (apply_all(), invalidate_buffers(), fake_write()) wait for no in-progress reads
+ * or writes before modifying buffer state.
+ *
+ * Supports error propagation from producer threads to blocked readers via set_error():
+ * a stored exception is rethrown by get_buffer_read() so errors surface naturally
+ * through the read path without any changes to call sites.
+ *
+ * @tparam T Element type.
+ * @tparam N Internal array size; usable capacity is N-1.
+ */
 template <typename T, std::size_t N> // last parameter to be removed, legacy support for timeout type
 class circular_buffer {
 public:
@@ -94,10 +110,12 @@ public:
 	using const_pointer = typename container_type::const_pointer;
 
 #if BOOST_PREDEF_WORKAROUND(BOOST_COMP_GNUC, <, 12, 0, 0)
-	/*
-	 * Due to GCC bug 71165, fixed on GCC 12, the aggregate initialization
-	 * of buffer, for large value of N, would generate large code and
-	 * take a lot of time to compile. As a workaround we use fill().
+	/*!
+	 * @brief Default constructor.
+	 *
+	 * Initializes the buffer in a valid, empty state with no pending reads or writes.
+	 * Uses fill() to work around GCC bug 71165 (fixed in GCC 12) where aggregate
+	 * initialization of large std::array generates excessive code.
 	 */
 	circular_buffer()
 		: _read_iterator{_buffer.begin()}
@@ -110,6 +128,11 @@ public:
 		_buffer.fill(T{});
 	}
 #else
+	/*!
+	 * @brief Default constructor.
+	 *
+	 * Initializes the buffer in a valid, empty state with no pending reads or writes.
+	 */
 	circular_buffer()
 		: _buffer{}
 		, _read_iterator{_buffer.begin()}
@@ -118,34 +141,93 @@ public:
 		, _halt{false}
 		, _read_halt{true}
 		, _write_halt{true}
-		, _read_pending{false} {
+		, _read_pending{false}
+		, _error{} {
 	}
 #endif
 
+	//! Destructor.
 	~circular_buffer() = default;
 
+	/*!
+	 * @brief Returns the maximum number of elements the buffer can hold.
+	 *
+	 * The capacity is N-1 because one slot is reserved to distinguish the empty
+	 * and full states when both iterators are equal (see implementation notes).
+	 *
+	 * @return Maximum number of elements.
+	 */
 	constexpr std::size_t capacity() const noexcept {
 		return _buffer.size() - 1;
 	}
 
+	/*!
+	 * @brief Applies a function to every element, then re-validates the buffer.
+	 *
+	 * Supervisor call: waits until no read or write is in progress, then resets
+	 * iterators and the error state, applies @p f to each element, and notifies
+	 * all waiters. Typical use: resize elements or reset per-element state on re-arm.
+	 *
+	 * @param f Function to apply to each element.
+	 */
 	void apply_all(std::function<void(T&)> f) {
 		supervisor_call([this, &f] {
 			_valid = false;
+			_error = nullptr;
 			_read_iterator = _buffer.begin();
 			_write_iterator = _buffer.begin();
 			std::for_each(_buffer.begin(), _buffer.end(), f);
 		});
 	}
 
+	/*!
+	 * @brief Marks the buffer as invalid and resets iterators and the error state.
+	 *
+	 * Supervisor call: waits until no read or write is in progress, then clears
+	 * the buffer state without touching element data. Writers that complete after
+	 * this call will not advance the write iterator (because _valid is false).
+	 * Used to drain the buffer on clear or re-arm.
+	 */
 	void invalidate_buffers() {
 		supervisor_call([this] {
 			_valid = false;
+			_error = nullptr;
 			_read_iterator = _buffer.begin();
 			_write_iterator = _buffer.begin();
 		});
 	}
 
-	// atomic function to clear and insert a fake event manipulated with f
+	/*!
+	 * @brief Stores an exception to be rethrown by blocked or future readers.
+	 *
+	 * First-wins: if an error is already stored, subsequent calls are silently
+	 * ignored. Wakes all threads blocked in get_buffer_read(). The stored error
+	 * is cleared by invalidate_buffers() and apply_all() (called on re-arm), so
+	 * the buffer returns to a clean state without manual intervention.
+	 *
+	 * Does not affect the write path: get_buffer_write() and end_writing() are
+	 * unaffected and continue to operate normally.
+	 *
+	 * @param e Exception pointer to store and rethrow to readers.
+	 */
+	void set_error(std::exception_ptr e) {
+		{
+			std::lock_guard<std::mutex> lk(_mtx);
+			if (!_error)
+				_error = std::move(e);
+		}
+		notify();
+	}
+
+	/*!
+	 * @brief Atomically clears the buffer and inserts a single fake element.
+	 *
+	 * Supervisor call: waits until no read or write is in progress, resets the
+	 * buffer to contain exactly one element initialized by @p f, then notifies
+	 * all waiters. Useful for injecting sentinel or control events.
+	 *
+	 * @param f Function to initialize the fake element.
+	 */
 	void fake_write(std::function<void(T&)> f) {
 		supervisor_call([this, &f] {
 			_valid = true;
@@ -155,40 +237,98 @@ public:
 		});
 	}
 
+	/*!
+	 * @brief Returns whether the buffer currently holds at least one element.
+	 *
+	 * Non-blocking. Returns true only if the buffer is valid, not halted, and not empty.
+	 *
+	 * @return @c true if data is immediately available.
+	 */
 	bool has_data() {
 		std::unique_lock<std::mutex> lk(_mtx);
 		return valid_and_not_empty();
 	}
 
+	/*!
+	 * @brief Blocks until the buffer is valid and empty.
+	 *
+	 * Used by the writer side to wait for the reader to drain all elements before
+	 * a supervisor operation or shutdown.
+	 */
 	void wait_empty() {
 		std::unique_lock<std::mutex> lk(_mtx);
 		_cv.wait(lk, [this] { return valid_and_empty(); });
 	}
 
+	/*!
+	 * @brief Wakes all threads blocked on the buffer's condition variable.
+	 *
+	 * Calls notify_all() on the internal condition variable. Used after writing
+	 * or after set_error() to unblock waiting readers.
+	 */
 	void notify() noexcept {
 		_cv.notify_all();
 	}
 
+	/*!
+	 * @brief Blocks until an element is available, then returns a pointer to it.
+	 *
+	 * Acquires the mutex and waits until data is available or an error is set.
+	 * If set_error() was called, rethrows the stored exception (takes precedence
+	 * over available data). The element remains owned by the buffer until the caller
+	 * invokes end_reading() (to commit) or abort_reading() (to discard). Only one
+	 * read can be pending at a time; a second concurrent call throws.
+	 *
+	 * @return Pointer to the next readable element.
+	 * @throws std::runtime_error If another read is already pending.
+	 * @throws Any exception stored by set_error().
+	 */
 	const_pointer get_buffer_read() {
 		std::unique_lock<std::mutex> lk(_mtx);
 		// prevent this function to be called by two threads until the buffer is released
 		if (BOOST_UNLIKELY(_read_pending))
 			throw std::runtime_error("another call to get_buffer_read is pending");
 		scoped_set<bool> ss(_read_pending, true);
-		auto condition = [this] { return valid_and_not_empty(); };
+		auto condition = [this] { return _error || valid_and_not_empty(); };
 		// wait until the condition is satisfied
 		_cv.wait(lk, condition);
+		// an error set by a producer thread takes precedence: rethrow it (~ss restores
+		// _read_pending under lock, then ~lk unlocks, during stack unwinding)
+		if (BOOST_UNLIKELY(static_cast<bool>(_error)))
+			std::rethrow_exception(_error);
 		ss.release();
 		_read_halt = false;
 		// no need to notify for _read_halt set to false
 		return caen::to_address(_read_iterator);
 	}
 
+	/*!
+	 * @brief Returns the sentinel value that represents an infinite timeout.
+	 *
+	 * Passing this value to get_buffer_read(timeout) makes it behave exactly like
+	 * the blocking no-timeout overload.
+	 *
+	 * @tparam Timeout Duration type.
+	 * @return Duration value of -1, used as the infinite-timeout sentinel.
+	 */
 	template <typename Timeout>
 	static constexpr Timeout infinite_timeout() {
 		return Timeout{ -1 };
 	}
 
+	/*!
+	 * @brief Waits up to @p timeout for an element, then returns a pointer to it.
+	 *
+	 * If @p timeout equals infinite_timeout(), delegates to the blocking overload.
+	 * If the timeout expires before data is available, returns @c nullptr. If
+	 * set_error() was called, rethrows the stored exception (takes precedence over
+	 * timeout). Only one read can be pending at a time; a second concurrent call throws.
+	 *
+	 * @param timeout Maximum time to wait; infinite_timeout() means no limit.
+	 * @return Pointer to the next readable element, or @c nullptr on timeout.
+	 * @throws std::runtime_error If another read is already pending.
+	 * @throws Any exception stored by set_error().
+	 */
 	template <typename Rep, typename Period>
 	const_pointer get_buffer_read(std::chrono::duration<Rep, Period> timeout) {
 		if (timeout == infinite_timeout<decltype(timeout)>())
@@ -198,32 +338,65 @@ public:
 		if (BOOST_UNLIKELY(_read_pending))
 			throw std::runtime_error("another call to get_buffer_read is pending");
 		scoped_set<bool> ss(_read_pending, true);
-		auto condition = [this] { return valid_and_not_empty(); };
+		auto condition = [this] { return _error || valid_and_not_empty(); };
 		// call wait_for only if the condition is not satisfied and the timeout is not zero,
 		// to avoid overheads of transforming wait_for into wait_until
 		if (!condition() && (timeout == decltype(timeout)::zero() || !_cv.wait_for(lk, timeout, condition)))
 			return nullptr;
+		// an error set by a producer thread takes precedence: rethrow it (~ss restores
+		// _read_pending under lock, then ~lk unlocks, during stack unwinding)
+		if (BOOST_UNLIKELY(static_cast<bool>(_error)))
+			std::rethrow_exception(_error);
 		ss.release();
 		_read_halt = false;
 		// no need to notify for _read_halt set to false
 		return caen::to_address(_read_iterator);
 	}
 
+	/*!
+	 * @brief Discards the current read without advancing the read iterator.
+	 *
+	 * The element pointed to by the last get_buffer_read() remains in the buffer
+	 * and will be returned again on the next get_buffer_read() call. Must be called
+	 * after get_buffer_read() if the element should not be consumed.
+	 */
 	void abort_reading() {
 		finalize_reading<false>();
 	}
 
+	/*!
+	 * @brief Commits the current read, advancing the read iterator, and notifies writers.
+	 *
+	 * Marks the element pointed to by the last get_buffer_read() as consumed,
+	 * advances the read iterator, and notifies all waiting writers. Must be called
+	 * after get_buffer_read() to release the element.
+	 */
 	void end_reading() {
 		finalize_reading<true>();
 		notify();
 	}
 
+	/*!
+	 * @brief Commits the current read, notifying writers only if the buffer is now empty.
+	 *
+	 * Like end_reading(), but skips the notify() call when the buffer still contains
+	 * elements, avoiding unnecessary wakeups in high-throughput scenarios.
+	 */
 	void end_reading_relaxed() {
 		const auto current_size = finalize_reading<true>();
 		if (current_size == 0)
 			notify();
 	}
 
+	/*!
+	 * @brief Returns a pointer to the current write slot (non-blocking).
+	 *
+	 * Marks a write as in progress and returns a pointer to the element to be filled.
+	 * The caller must follow up with end_writing() (to commit) or abort_writing()
+	 * (to discard). There is always at least one writable slot because capacity is N-1.
+	 *
+	 * @return Pointer to the element to write into.
+	 */
 	pointer get_buffer_write() {
 		std::unique_lock<std::mutex> lk(_mtx);
 		_write_halt = false;
@@ -232,26 +405,56 @@ public:
 		return caen::to_address(_write_iterator);
 	}
 
+	/*!
+	 * @brief Discards the current write without advancing the write iterator.
+	 *
+	 * The write slot is released but its contents are not made visible to readers.
+	 * Must be called after get_buffer_write() if the element should not be published.
+	 */
 	void abort_writing() {
 		finalize_writing<false>();
 	}
 
+	/*!
+	 * @brief Commits the current write, advancing the write iterator, and notifies readers.
+	 *
+	 * Makes the element filled since get_buffer_write() visible to readers, advances
+	 * the write iterator, and notifies all waiting readers. Blocks if the buffer is
+	 * full until a reader consumes an element.
+	 */
 	void end_writing() {
 		finalize_writing<true>();
 		notify();
 	}
 
+	/*!
+	 * @brief Commits the current write, notifying readers only if the buffer is now full.
+	 *
+	 * Like end_writing(), but skips the notify() call when the buffer still has free
+	 * slots, avoiding unnecessary wakeups in high-throughput scenarios.
+	 */
 	void end_writing_relaxed() {
 		const auto current_size = finalize_writing<true>();
 		if (current_size == capacity())
 			notify();
 	}
 
+	/*!
+	 * @brief Returns whether a read is currently in progress.
+	 *
+	 * Thread-safe. Returns @c true between a call to get_buffer_read() and the
+	 * corresponding end_reading() or abort_reading().
+	 *
+	 * @return @c true if a read is pending.
+	 */
 	bool is_read_pending() {
 		std::unique_lock<std::mutex> lk(_mtx);
 		return _read_pending;
 	}
 
+	/*!
+	 * @deprecated Use is_read_pending() instead.
+	 */
 	[[deprecated("renamed is_read_pending")]] bool is_get_buffer_read_pending() {
 		return is_read_pending();
 	}
@@ -341,6 +544,7 @@ private:
 	bool _read_halt;
 	bool _write_halt;
 	bool _read_pending;
+	std::exception_ptr _error;
 	mutable std::mutex _mtx;
 	mutable std::condition_variable _cv;
 	mutable std::condition_variable _cv_supervisor;

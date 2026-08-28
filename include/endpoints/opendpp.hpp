@@ -87,6 +87,7 @@ struct opendpp final : public aggregate_endpoint {
 	void resize() override;
 	void decode(const std::byte* p, std::size_t size) override;
 	void stop() override;
+	void notify_error(std::exception_ptr e) override;
 	void set_data_format(const std::string &json_format) override;
 	void read_data(timeout_t timeout, std::va_list* args) override;
 	void has_data(timeout_t timeout) override;
@@ -159,7 +160,7 @@ private:
 	void decode_hit(const std::byte*& p);
 	void decode_hit_waveform(const std::byte*& p, hit_evt::waveform_t& waveform, bool& truncated);
 
-	struct endpoint_impl;
+	struct endpoint_impl; // forward declaration
 	std::unique_ptr<endpoint_impl> _pimpl;
 
 };

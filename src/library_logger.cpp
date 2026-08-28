@@ -87,7 +87,6 @@ void log_library_versions() {
 	static constexpr auto fmt_version = FMT_VERSION;
 	static constexpr auto boost_version = BOOST_VERSION;
 
-	spdlog::info("built on {} {}", __DATE__, __TIME__);
 	spdlog::info("compiled with {} on {}", compiler_version, platform_name);
 	spdlog::info("stdlib version: {}", stdlib_version);
 	spdlog::info("caen-dig2 version: {}", caen_dig2_version);

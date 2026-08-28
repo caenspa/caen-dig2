@@ -164,6 +164,16 @@ void set_value(std::uint32_t handle, const std::string& path, const std::string&
 	h.get_client().set_value(h.internal_handle(), path, value);
 }
 
+std::vector<multi_result> set_values(std::uint32_t handle, const std::vector<std::string>& paths, const std::vector<std::string>& values) {
+	const auto h = handle::lib::get_if_used(handle);
+	return h.get_client().set_values(h.internal_handle(), paths, values);
+}
+
+std::vector<multi_result> get_values(std::uint32_t handle, const std::vector<std::string>& paths) {
+	const auto h = handle::lib::get_if_used(handle);
+	return h.get_client().get_values(h.internal_handle(), paths);
+}
+
 void send_command(std::uint32_t handle, const std::string& path) {
 	const auto h = handle::lib::get_if_used(handle);
 	h.get_client().send_command(h.internal_handle(), path);

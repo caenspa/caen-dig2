@@ -40,6 +40,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <string>
 
 #include <json/json_common.hpp>
 
@@ -79,6 +80,16 @@ inline constexpr std::size_t path{256};
 } // namespace str
 
 } // namespace max_size
+
+/**
+ * Outcome of a single sub-command inside a batched MULTIPLE request.
+ * - on success: 'value' holds the read value (GET) or is empty (SET);
+ * - on failure: 'ok' is false and 'value' holds the backend error message.
+ */
+struct multi_result {
+	bool ok;
+	std::string value;
+};
 
 } // namespace dig2
 

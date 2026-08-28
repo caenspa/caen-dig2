@@ -85,7 +85,7 @@ struct raw final : public hw_endpoint {
 
 private:
 
-	struct endpoint_impl;
+	struct endpoint_impl; // forward declaration
 	std::unique_ptr<endpoint_impl> _pimpl;
 
 };

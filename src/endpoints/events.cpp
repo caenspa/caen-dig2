@@ -81,6 +81,11 @@ void events::has_data(timeout_t timeout) {
 void events::clear_data() {
 }
 
+void events::notify_error(std::exception_ptr e) {
+	// nothing to do: events does not expose data to the user (read_data throws not_yet_implemented)
+	boost::ignore_unused(e);
+}
+
 void events::resize() {
 }
 

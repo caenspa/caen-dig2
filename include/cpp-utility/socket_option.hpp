@@ -52,8 +52,22 @@ namespace caen {
 
 namespace socket_option {
 
+/**
+ * @brief TCP keep interval option
+ * Adjust the interval between keep-alive probes when the connection is idle.
+ */
 using keep_interval = boost::asio::detail::socket_option::integer<BOOST_ASIO_OS_DEF(IPPROTO_TCP), TCP_KEEPINTVL>;
+
+/**
+ * @brief TCP keep count option
+ * Adjust the number of keep-alive probes sent before declaring the connection dead.
+ */
 using keep_cnt = boost::asio::detail::socket_option::integer<BOOST_ASIO_OS_DEF(IPPROTO_TCP), TCP_KEEPCNT>;
+
+/**
+ * @brief TCP keep idle option
+ * Adjust the idle time before sending the first keep-alive probe.
+ */
 #if BOOST_OS_MACOS
 using keep_idle = boost::asio::detail::socket_option::integer<BOOST_ASIO_OS_DEF(IPPROTO_TCP), TCP_KEEPALIVE>;
 #else

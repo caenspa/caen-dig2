@@ -64,6 +64,7 @@ enum struct dpp_digital_probe_type : std::uint8_t {
 	post_saturation_event			= 0b01010,
 	energy_filter_saturation		= 0b01011,
 	signal_inhibit					= 0b01100,
+	pha_cfd_filter_armed			= 0b01110,
 	// PSD specific (PSD firmware values with offset 0b10000)
 	over_threshold					= 0b10100,
 	charge_ready					= 0b10101,
@@ -85,6 +86,7 @@ enum struct dpp_analog_probe_type : std::uint8_t {
 	energy_filter					= 0b0010,
 	energy_filter_baseline			= 0b0011,
 	energy_filter_minus_baseline	= 0b0100,
+	pha_cfd_filter					= 0b0110,
 	// PSD specific (PSD firmware values with offset 0b1000)
 	baseline						= 0b1001,
 	cfd								= 0b1010,

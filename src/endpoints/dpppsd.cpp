@@ -111,8 +111,8 @@ struct dpppsd::endpoint_impl {
 
 dpppsd::dpppsd(client& client, handle::internal_handle_t endpoint_handle)
 	: aggregate_endpoint(client, endpoint_handle)
-	, _pimpl{std::make_unique<endpoint_impl>(client.get_sampling_period_ns())}
-	, _stats_ep{std::make_shared<stats>(client, client.get_handle(endpoint_handle, "/stats"))} {
+	, _stats_ep{std::make_shared<stats>(client, client.get_handle(endpoint_handle, "/stats"))}
+	, _pimpl{std::make_unique<endpoint_impl>(client.get_sampling_period_ns())} {
 
 	get_client().register_endpoint(_stats_ep);
 
@@ -726,6 +726,11 @@ void dpppsd::clear_data() {
 	require_clear();
 	_pimpl->_buffer.invalidate_buffers();
 	_stats_ep->clear_data();
+}
+
+void dpppsd::notify_error(std::exception_ptr e) {
+	// stats endpoint reads are non-blocking, only the hit buffer can leave a reader stuck
+	_pimpl->_buffer.set_error(std::move(e));
 }
 
 struct dpppsd::stats::endpoint_impl {

@@ -36,6 +36,7 @@
 
 #include "endpoints/rawudp.hpp"
 
+#include <array>
 #include <condition_variable>
 #include <exception>
 #include <filesystem>
@@ -91,7 +92,184 @@ namespace ep {
 
 namespace {
 
+std::optional<handle::internal_handle_t> find_stats_endpoint_handle(client& client, handle::internal_handle_t endpoint_handle) {
+	for (const auto child_handle : client.get_child_handles(endpoint_handle, std::string{})) {
+		const auto properties = client.get_node_properties(child_handle, std::string{});
+		if (properties.first == "stats")
+			return child_handle;
+	}
+
+	return std::nullopt;
+}
+
+struct rawudp_footer_data {
+	struct s {
+		// 1st word
+		static inline constexpr std::size_t buffer_id{16};
+		static inline constexpr std::size_t tbd_1{1};
+		static inline constexpr std::size_t hash{32};
+		static inline constexpr std::size_t datagram_id{24}; // not part of the datagram!
+		static inline constexpr std::size_t aligned{1};
+		static inline constexpr std::size_t n_words{13};
+		static inline constexpr std::size_t last{1};
+	};
+	using word_t = std::uint64_t;
+	using buffer_id_t = caen::uint_t<s::buffer_id>::fast;
+	using datagram_id_t = caen::uint_t<s::datagram_id>::fast;
+	buffer_id_t _buffer_id{};
+	// - tbd_1 not saved into struct
+	caen::uint_t<s::hash>::fast _hash{};
+	datagram_id_t _datagram_id{};
+	caen::uint_t<s::aligned>::fast _aligned{};
+	caen::uint_t<s::n_words>::fast _n_words{};
+	caen::uint_t<s::last>::fast _last{};
+};
+
+template <typename Iterator>
+rawudp_footer_data parse_rawudp_footer(Iterator& it) {
+	rawudp_footer_data footer;
+	auto word = caen::serdes::deserialize<rawudp_footer_data::word_t>(it);
+	caen::bit::mask_and_right_shift<rawudp_footer_data::s::last>(word, footer._last);
+	caen::bit::mask_and_right_shift<rawudp_footer_data::s::n_words>(word, footer._n_words);
+	caen::bit::mask_and_right_shift<rawudp_footer_data::s::aligned>(word, footer._aligned);
+	caen::bit::mask_and_right_shift<rawudp_footer_data::s::hash>(word, footer._hash);
+	caen::bit::right_shift<rawudp_footer_data::s::tbd_1>(word);
+	caen::bit::mask_and_right_shift<rawudp_footer_data::s::buffer_id>(word, footer._buffer_id);
+	BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
+	return footer;
+}
+
+enum class rawudp_flush_mode {
+	none,
+	keep_tail,
+	drop_tail,
+};
+
+struct rawudp_reassembly_state {
+
+	struct continuity {
+		rawudp_footer_data::datagram_id_t _expected_datagram_id{};
+		bool _discontinuity{};
+		bool _previous_incomplete{};
+		std::uint64_t _estimated_lost_buffers{};
+	};
+
+	void reset_assembly() noexcept {
+		_last_aligned_size = 0;
+		_current_assembling_buffer_id = {};
+	}
+
+	void reset() noexcept {
+		_last_valid_footer = std::nullopt;
+		reset_assembly();
+	}
+
+	continuity check_continuity(const rawudp_footer_data& footer) const noexcept {
+		if (!_last_valid_footer.has_value())
+			return {};
+
+		const auto& lvf = *_last_valid_footer;
+		const auto expected_buffer_id = static_cast<bool>(lvf._last) ? next_buffer_id(lvf._buffer_id) : lvf._buffer_id;
+
+		continuity ret;
+		if (footer._buffer_id == expected_buffer_id) {
+			ret._expected_datagram_id = static_cast<bool>(lvf._last) ? 0 : next_datagram_id(lvf._datagram_id);
+			return ret;
+		}
+
+		ret._discontinuity = true;
+		ret._expected_datagram_id = 0;
+		if (static_cast<bool>(lvf._last)) {
+			ret._estimated_lost_buffers = buffer_distance(expected_buffer_id, footer._buffer_id);
+		} else {
+			ret._previous_incomplete = true;
+			const auto distance = buffer_distance(lvf._buffer_id, footer._buffer_id);
+			ret._estimated_lost_buffers = distance == 0 ? 0 : distance - 1;
+		}
+		return ret;
+	}
+
+	void accept(rawudp_footer_data footer, rawudp_footer_data::datagram_id_t datagram_id) noexcept {
+		footer._datagram_id = datagram_id;
+		_last_valid_footer = footer;
+	}
+
+	bool has_last_valid_footer() const noexcept {
+		return _last_valid_footer.has_value();
+	}
+
+	void update_aligned_checkpoint(const rawudp_footer_data& footer, std::size_t size) noexcept {
+		if (static_cast<bool>(footer._aligned))
+			_last_aligned_size = size;
+	}
+
+	bool has_aligned_checkpoint() const noexcept {
+		return _last_aligned_size > 0;
+	}
+
+	static rawudp_footer_data::buffer_id_t next_buffer_id(rawudp_footer_data::buffer_id_t v) noexcept {
+		return caen::bit::mask_at<rawudp_footer_data::s::buffer_id>(v + 1U);
+	}
+
+	static rawudp_footer_data::datagram_id_t next_datagram_id(rawudp_footer_data::datagram_id_t v) noexcept {
+		return caen::bit::mask_at<rawudp_footer_data::s::datagram_id>(v + 1U);
+	}
+
+	static std::uint64_t buffer_distance(rawudp_footer_data::buffer_id_t from, rawudp_footer_data::buffer_id_t to) noexcept {
+		return caen::bit::mask_at<rawudp_footer_data::s::buffer_id>(to - from);
+	}
+
+	std::optional<rawudp_footer_data> _last_valid_footer;
+	std::size_t _last_aligned_size{};
+	rawudp_footer_data::buffer_id_t _current_assembling_buffer_id{};
+
+};
+
 } // unnamed namespace
+
+struct rawudp::stats::endpoint_impl {
+
+	endpoint_impl()
+		: _logger{library_logger::create_logger("rawudp_stats_ep"s)}
+		, _args_list{rawudp::stats::default_data_format()} {
+	}
+
+	void set_data_format(const std::string& json_format) {
+		data_format_utils<rawudp::stats>::parse_data_format(_args_list, json_format);
+	}
+
+	using counters = rawudp::stats::counters;
+
+	counters get_snapshot() const {
+		std::lock_guard l{_mtx};
+		return _counters;
+	}
+
+	void add_counters(const counters& counters) {
+		std::lock_guard l{_mtx};
+		_counters._received_datagrams += counters._received_datagrams;
+		_counters._discarded_datagrams += counters._discarded_datagrams;
+		_counters._received_bytes += counters._received_bytes;
+		_counters._emitted_bytes += counters._emitted_bytes;
+		_counters._completed_buffers += counters._completed_buffers;
+		_counters._flushed_buffers += counters._flushed_buffers;
+		_counters._incomplete_buffers += counters._incomplete_buffers;
+		_counters._estimated_lost_buffers += counters._estimated_lost_buffers;
+		_counters._recovered_bytes += counters._recovered_bytes;
+		_counters._discarded_bytes += counters._discarded_bytes;
+	}
+
+	void clear_data() {
+		std::lock_guard l{_mtx};
+		_counters = {};
+	}
+
+	std::shared_ptr<spdlog::logger> _logger;
+	counters _counters;
+	args_list_t _args_list;
+	mutable std::mutex _mtx;
+
+};
 
 struct rawudp::endpoint_impl {
 
@@ -104,10 +282,11 @@ struct rawudp::endpoint_impl {
 		ready,
 	};
 
-	endpoint_impl(client& client, handle::internal_handle_t endpoint_handle)
+	endpoint_impl(client& client, handle::internal_handle_t endpoint_handle, std::shared_ptr<rawudp::stats> stats_ep)
 		: _logger{library_logger::create_logger(fmt::format("rawudp {}", endpoint_handle))}
 		, _max_size_getter{}
 		, _is_decoded_getter{}
+		, _stats_ep{std::move(stats_ep)}
 		, _io_context{}
 		, _endpoint(client.get_endpoint_address(), server_definitions::udp_port)
 		, _socket(_io_context, _endpoint.protocol())
@@ -117,7 +296,7 @@ struct rawudp::endpoint_impl {
 		, _state{state::init}
 		, _clear_buffer{false}
 		, _send_stop{false}
-		, _last_valid_footer{std::nullopt}
+		, _reassembly{}
 		, _datagram_buffer(max_datagram_size)
 		, _hash_buffer(max_hash_size)
 		, _buffer()
@@ -206,10 +385,11 @@ struct rawudp::endpoint_impl {
 			wt::construct_at(&_logger);
 			wt::construct_at(&_max_size_getter);
 			wt::construct_at(&_is_decoded_getter);
+			wt::construct_at(&_stats_ep);
 			wt::construct_at(&_mtx_state);
 			wt::construct_at(&_cv_state);
 			wt::construct_at(&_sw_ep_list);
-			wt::construct_at(&_last_valid_footer);
+			wt::construct_at(&_reassembly);
 			wt::construct_at(&_datagram_buffer);
 			wt::construct_at(&_buffer);
 
@@ -329,6 +509,10 @@ struct rawudp::endpoint_impl {
 		// 5. wait for idle, generated by the first empty event
 		SPDLOG_LOGGER_DEBUG(_logger, "waiting for state: idle");
 		wait_state(endpoint_impl::state::idle);
+
+		// 6. reset statistics; UDP continuity is synchronized by the empty datagram handled by the receiver thread
+		if (_stats_ep)
+			_stats_ep->clear_data();
 
 		SPDLOG_LOGGER_DEBUG(_logger, "clear completed");
 	}
@@ -540,9 +724,21 @@ private:
 
 	}
 	catch (const std::exception& ex) {
-		_logger->critical("receiver critical error: {}", ex.what());
-		_logger->flush();
-		std::terminate();
+		/*
+		 * Do not crash: close the thread gracefully and surface the error to the user on the
+		 * next read_data/has_data. Recovery from a receiver failure requires reconnecting to
+		 * the device.
+		 */
+		_logger->error("receiver thread stopped due to an error: {}", ex.what());
+		const auto msg = fmt::format("receiver thread stopped due to an error: {}. Reconnect to the device to recover.", ex.what());
+		const auto eptr = std::make_exception_ptr(ex::runtime_error(msg));
+		/*
+		 * Order matters: claim the software endpoint buffers (decoded-mode readers) before
+		 * _buffer, since set_error on _buffer is what wakes the decoder (set_error is first-wins).
+		 */
+		for (auto& ep : _sw_ep_list)
+			ep->notify_error(eptr);
+		_buffer.set_error(eptr);
 	}
 
 	void decode_hash_buffer(const caen::span<std::byte>& data) {
@@ -583,25 +779,33 @@ private:
 
 		SPDLOG_LOGGER_DEBUG(_logger, "data received (size={})", bytes_transferred);
 
-		if (bytes_transferred == 0) {
-			SPDLOG_LOGGER_DEBUG(_logger, "ignoring empty datagram");
+		if (BOOST_UNLIKELY(bytes_transferred == 0)) {
+			SPDLOG_LOGGER_DEBUG(_logger, "ignoring empty UDP datagram");
 			return;
 		}
 
+		auto stats_delta = rawudp::stats::counters{};
+		caen::scope_exit publish_stats([this, &stats_delta] {
+			if (_stats_ep)
+				_stats_ep->add_counters(stats_delta);
+		});
+
 		// datagram cannot be larger than 65507 bytes and must contain at least the footer
-		BOOST_ASSERT_MSG(datagram_footer_size <= bytes_transferred && bytes_transferred <= _datagram_buffer.size(), "invalid bytes_transferred");
+		BOOST_ASSERT_MSG(bytes_transferred <= _datagram_buffer.size(), "invalid bytes_transferred");
+		if (BOOST_UNLIKELY(bytes_transferred < datagram_footer_size)) {
+			++stats_delta._received_datagrams;
+			++stats_delta._discarded_datagrams;
+			stats_delta._received_bytes += bytes_transferred;
+			_logger->warn("discarding UDP datagram shorter than footer (size={})", bytes_transferred);
+			return;
+		}
+
+		++stats_delta._received_datagrams;
+		stats_delta._received_bytes += bytes_transferred;
 
 		const auto datagram_buffer = caen::span<std::byte>(_datagram_buffer.data(), bytes_transferred);
 		auto footer_buffer_it = datagram_buffer.cend() - datagram_footer_size;
-		footer_data footer;
-		auto word = caen::serdes::deserialize<sw_endpoint::word_t>(footer_buffer_it);
-		caen::bit::mask_and_right_shift<footer_data::s::last>(word, footer._last);
-		caen::bit::mask_and_right_shift<footer_data::s::n_words>(word, footer._n_words);
-		caen::bit::mask_and_right_shift<footer_data::s::aligned>(word, footer._aligned);
-		caen::bit::mask_and_right_shift<footer_data::s::hash>(word, footer._hash);
-		caen::bit::right_shift<footer_data::s::tbd_1>(word);
-		caen::bit::mask_and_right_shift<footer_data::s::buffer_id>(word, footer._buffer_id);
-		BOOST_ASSERT_MSG(!word, "inconsistent word decoding");
+		const auto footer = parse_rawudp_footer(footer_buffer_it);
 
 		BOOST_ASSERT_MSG(footer_buffer_it == datagram_buffer.cend(), "inconsistent footer decoding");
 
@@ -611,50 +815,26 @@ private:
 		if (BOOST_UNLIKELY(data_size > datagram_buffer.size() - datagram_footer_size))
 			throw ex::runtime_error(fmt::format("inconsistent data size (data_size={}, bytes_transferred={})", data_size, bytes_transferred));
 
-		auto flush = false;
-
 		const auto datagram_data_buffer = datagram_buffer.subspan(0, data_size);
 		decode_hash_buffer(datagram_data_buffer);
 
-		decltype(footer._datagram_id) expected_datagram_id;
+		auto continuity = _reassembly.check_continuity(footer);
+		auto expected_datagram_id = continuity._expected_datagram_id;
+		auto reset_reassembly = false;
+		auto discard_pending_on_clear = false;
+		auto incomplete_buffer_counted = false;
 
-		// consistency check
-		if (BOOST_LIKELY(_last_valid_footer.has_value())) {
-			// standard case
-			const auto& lvf = *_last_valid_footer;
-			const auto expected_buffer_id = BOOST_UNLIKELY(lvf._last) ? caen::bit::mask_at<footer_data::s::buffer_id>(lvf._buffer_id + 1U) : lvf._buffer_id;
-			if (BOOST_LIKELY(footer._buffer_id == expected_buffer_id)) {
-				// standard case
-				expected_datagram_id = BOOST_UNLIKELY(lvf._last) ? 0 : caen::bit::mask_at<footer_data::s::datagram_id>(lvf._datagram_id + 1U);
-			} else {
-				// datagram of the previous buffer lost
-				SPDLOG_LOGGER_DEBUG(_logger, "last datagrams of previous buffer have been lost (buffer_id={}, expected_buffer_id={})", footer._buffer_id, expected_buffer_id);
-				// if datagram_id would be zero, we can start a new buffer
-				expected_datagram_id = 0;
-				_clear_buffer = true;
-			}
-			if (!lvf._last && lvf._aligned && data_size == 0 && !_clear_buffer) {
-				/*
-				 * If last footer was aligned and current datagram is empty, we can flush the current datagram
-				 * even if not last, unless we missed some datagrams in the meanwhile.
-				 *
-				 * This could be improved by saving last used package with aligned flag, and flushing
-				 * that data to the user even in case of missing datagrams, and even if the current datagram
-				 * is not empty.
-				 */
-				SPDLOG_LOGGER_DEBUG(_logger, "flushing aligned buffer even if last datagram was not last");
-				flush = true;
-			}
-		} else {
-			// first datagram case
-			expected_datagram_id = 0;
+		if (!_reassembly.has_last_valid_footer())
 			_clear_buffer = true;
-		}
+
+		// check for datagram_id continuity
 		SPDLOG_LOGGER_DEBUG(_logger, "expected_datagram_id={}", expected_datagram_id);
+		// handle possible datagram loss or clear
 		if (!check_datagram_id(expected_datagram_id, footer._hash)) {
 			if (footer._buffer_id == 0 && check_datagram_id(0, footer._hash)) {
 				// there have been a clear
 				expected_datagram_id = 0;
+				reset_reassembly = true;
 				SPDLOG_LOGGER_DEBUG(_logger, "counters reset, probably due to a clear");
 			} else {
 				// datagram of the current buffer lost
@@ -665,14 +845,54 @@ private:
 					expected_datagram_id = 0; // force to 0, unclear if it is what we need, but since we are clearing it should be the same
 				} else {
 					SPDLOG_LOGGER_DEBUG(_logger, "discarding current datagram");
+					++stats_delta._discarded_datagrams;
+					stats_delta._discarded_bytes += data_size;
 					return;
 				}
 			}
 		}
-		footer._datagram_id = expected_datagram_id;
+
+		if (reset_reassembly) {
+			_reassembly.reset();
+			_clear_buffer = true;
+			continuity = {};
+		}
+
+		auto flush_mode = rawudp_flush_mode::none;
+		if (continuity._discontinuity) {
+			SPDLOG_LOGGER_DEBUG(_logger, "buffer_id discontinuity detected (buffer_id={}, estimated_lost_buffers={})", footer._buffer_id, continuity._estimated_lost_buffers);
+			_clear_buffer = true;
+			discard_pending_on_clear = true;
+			if (continuity._previous_incomplete) {
+				++stats_delta._incomplete_buffers;
+				incomplete_buffer_counted = true;
+			}
+			if (continuity._estimated_lost_buffers != 0)
+				stats_delta._estimated_lost_buffers += continuity._estimated_lost_buffers;
+			/*
+			 * A buffer_id jump means we cannot safely connect the current tail to the next
+			 * buffer. If we already have an aligned checkpoint, emit only that prefix and
+			 * discard the remaining tail.
+			 */
+			if (_reassembly.has_aligned_checkpoint())
+				flush_mode = rawudp_flush_mode::drop_tail;
+		}
+
+		if (data_size == 0 && !_clear_buffer && _reassembly.has_aligned_checkpoint()) {
+			/*
+			 * Empty datagrams are valid keep-alives. With datagram_id continuity there is
+			 * no data loss, so flush the aligned prefix without forcing a buffer reset.
+			 * Any tail after the last aligned checkpoint is kept locally and prepended to
+			 * the next non-empty datagram of the same buffer.
+			 */
+			flush_mode = rawudp_flush_mode::keep_tail;
+			SPDLOG_LOGGER_DEBUG(_logger, "flushing aligned prefix on empty keep-alive datagram (aligned_size={})", _reassembly._last_aligned_size);
+		}
+
+		const auto flush = flush_mode != rawudp_flush_mode::none;
 
 		// this datagram is going to be used
-		_last_valid_footer = footer;
+		_reassembly.accept(footer, expected_datagram_id);
 
 		{
 			std::unique_lock lk{_mtx_state};
@@ -683,6 +903,10 @@ private:
 					SPDLOG_LOGGER_DEBUG(_logger, "empty data while in clearing_receiver");
 					_cv_state.wait(lk, [this] { return caen::is_in(_state, endpoint_impl::state::clearing_receiver); });
 					_clear_buffer = true;
+					// Keep the verified empty datagram as the UDP continuity anchor. A clear
+					// does not imply that the remote counters have reset: that is detected
+					// exclusively by the dedicated datagram_id=0 hash check above.
+					_reassembly.reset_assembly();
 					SPDLOG_LOGGER_DEBUG(_logger, "set idle state");
 					_state = endpoint_impl::state::idle;
 					lk.unlock();
@@ -698,58 +922,148 @@ private:
 			_cv_state.wait(lk, [this] { return caen::is_in(_state, endpoint_impl::state::ready, endpoint_impl::state::clearing_receiver); });
 		}
 
-		const auto bw = _buffer.get_buffer_write();
-		caen::scope_exit se_abort([this] { _buffer.abort_writing(); });
+		if (flush) {
 
-		auto& data = bw->_data;
+			auto bw = _buffer.get_buffer_write();
+			caen::scope_exit se_abort([this] { _buffer.abort_writing(); });
 
-		if (std::exchange(_clear_buffer, false)) {
-			caen::clear(data);
-		}
+			auto& data = bw->_data;
 
-		if (data_size != 0) {
+			BOOST_ASSERT_MSG(_reassembly._last_aligned_size > 0, "flush requires aligned checkpoint");
+			BOOST_ASSERT_MSG(_reassembly._last_aligned_size <= data.size(), "aligned checkpoint beyond current buffer size");
 
-			const auto offset = data.size();
+			const auto aligned_size = _reassembly._last_aligned_size;
+			const auto discarded_tail_size = data.size() - aligned_size;
 
-			// resize (no allocation, unless user changed max data size related parameters after disarm with data still to be read)
-			caen::safe_increase_size(data, datagram_data_buffer.size());
+			caen::vector<std::byte> tail_data;
+			// For keep-alive flushes, preserve the bytes after the last aligned checkpoint.
+			if (flush_mode == rawudp_flush_mode::keep_tail && discarded_tail_size != 0) {
+				caen::resize(tail_data, discarded_tail_size);
+				boost::copy(caen::span<std::byte>(data.data() + aligned_size, discarded_tail_size), tail_data.begin());
+			}
 
-			// read data from datagram
-			boost::copy(datagram_data_buffer, data.begin() + offset);
-
-			SPDLOG_LOGGER_DEBUG(_logger, "data copied (size={})", datagram_data_buffer.size());
-
-		} else {
-			// nothing to do, flushing current buffer due to an empty packet
-			BOOST_ASSERT_MSG(flush, "inconsistent flush flag");
-		}
-
-		if (static_cast<bool>(footer._last) || flush) {
+			caen::resize(data, aligned_size);
 
 			if (BOOST_UNLIKELY(check_state(endpoint_impl::state::clearing_receiver))) {
 				SPDLOG_LOGGER_DEBUG(_logger, "discarding data received in clearing_receiver state");
 				_clear_buffer = true;
+				_reassembly.reset();
 				return;
 			}
 
 			BOOST_ASSERT_MSG(!data.empty(), "unexpected empty real buffer, reserved for fake writes");
 
-			SPDLOG_LOGGER_DEBUG(_logger, "buffer completed (size={})", data.size());
+			SPDLOG_LOGGER_DEBUG(_logger, "buffer flushed (size={})", data.size());
 
-			// fill auxiliary data
-			bw->_buffer_id = static_cast<std::uint16_t>(footer._buffer_id);
-			bw->_flush = flush;
+			stats_delta._emitted_bytes += data.size();
+			++stats_delta._flushed_buffers;
+			if (flush_mode == rawudp_flush_mode::drop_tail) {
+				// drop_tail is a conservative recovery path: the flushed prefix is recovered data.
+				stats_delta._recovered_bytes += data.size();
+				if (!incomplete_buffer_counted)
+					++stats_delta._incomplete_buffers;
+				if (discarded_tail_size != 0)
+					stats_delta._discarded_bytes += discarded_tail_size;
+			}
+
+			bw->_buffer_id = static_cast<std::uint16_t>(_reassembly._current_assembling_buffer_id);
+			bw->_flush = true;
 
 			se_abort.release();
 			_buffer.end_writing();
 
-			_clear_buffer = true;
+			SPDLOG_LOGGER_DEBUG(_logger, "do_read completed");
+
+			_reassembly._last_aligned_size = 0;
+			discard_pending_on_clear = false;
+
+			/*
+			 * If we kept a tail, write it back immediately so the next non-empty datagram
+			 * can continue assembling the same buffer without an extra copy later on.
+			 */
+			if (!tail_data.empty()) {
+				auto carry_bw = _buffer.get_buffer_write();
+				caen::scope_exit se_carry([this] { _buffer.abort_writing(); });
+				auto& carry_data = carry_bw->_data;
+
+				/*
+				 * Start a new in-memory assembly span from the retained tail. _clear_buffer
+				 * must stay false here, otherwise the next write would wipe what we just kept.
+				 */
+				caen::clear(carry_data);
+				_reassembly._last_aligned_size = 0;
+				_reassembly._current_assembling_buffer_id = footer._buffer_id;
+				_clear_buffer = false;
+
+				caen::safe_increase_size(carry_data, tail_data.size());
+				boost::copy(tail_data, carry_data.begin());
+
+				SPDLOG_LOGGER_DEBUG(_logger, "retained tail after keep-alive flush (size={})", carry_data.size());
+			} else {
+				// No tail to carry: the next write can start from a clean buffer.
+				_clear_buffer = true;
+			}
+
+		}
+
+		auto bw = _buffer.get_buffer_write();
+		caen::scope_exit se_abort([this] { _buffer.abort_writing(); });
+
+		auto& write_data = bw->_data;
+
+		if (std::exchange(_clear_buffer, false)) {
+			if (discard_pending_on_clear && !write_data.empty())
+				stats_delta._discarded_bytes += write_data.size();
+			caen::clear(write_data);
+			_reassembly._last_aligned_size = 0;
+			_reassembly._current_assembling_buffer_id = footer._buffer_id;
+		}
+
+		if (data_size != 0) {
+
+			const auto offset = write_data.size();
+
+			// resize (no allocation, unless user changed max data size related parameters after disarm with data still to be read)
+			caen::safe_increase_size(write_data, datagram_data_buffer.size());
+
+			// read data from datagram
+			boost::copy(datagram_data_buffer, write_data.begin() + offset);
+
+			SPDLOG_LOGGER_DEBUG(_logger, "data copied (size={})", datagram_data_buffer.size());
+
+			// track last aligned boundary for partial flush recovery
+			_reassembly.update_aligned_checkpoint(footer, write_data.size());
+		}
+
+		if (static_cast<bool>(footer._last)) {
+			if (BOOST_UNLIKELY(check_state(endpoint_impl::state::clearing_receiver))) {
+				SPDLOG_LOGGER_DEBUG(_logger, "discarding data received in clearing_receiver state");
+				_clear_buffer = true;
+				_reassembly.reset();
+				return;
+			}
+
+			BOOST_ASSERT_MSG(!write_data.empty(), "unexpected empty real buffer, reserved for fake writes");
+
+			SPDLOG_LOGGER_DEBUG(_logger, "buffer completed (size={}, flush={})", write_data.size(), false);
+
+			stats_delta._emitted_bytes += write_data.size();
+			++stats_delta._completed_buffers;
+
+			bw->_buffer_id = static_cast<std::uint16_t>(_reassembly._current_assembling_buffer_id);
+			bw->_flush = false;
+
+			se_abort.release();
+			_buffer.end_writing();
 
 			SPDLOG_LOGGER_DEBUG(_logger, "do_read completed");
 
+			_clear_buffer = true;
+			_reassembly._last_aligned_size = 0;
+
 		} else {
 
-			SPDLOG_LOGGER_DEBUG(_logger, "buffer not completed (size={})", data.size());
+			SPDLOG_LOGGER_DEBUG(_logger, "buffer not completed (size={})", bw->_data.size());
 
 		}
 
@@ -792,9 +1106,16 @@ private:
 
 	}
 	catch (const std::exception& ex) {
-		_logger->critical("decoder critical error: {}", ex.what());
-		_logger->flush();
-		std::terminate();
+		/*
+		 * Do not crash: close the thread gracefully and surface the error to the user on the
+		 * next read_data/has_data. The decoder is recreated on arm_acquisition, so re-arming
+		 * recovers.
+		 */
+		_logger->error("decoder thread stopped due to an error: {}", ex.what());
+		const auto msg = fmt::format("decoder thread stopped due to an error: {}. Re-arm the acquisition to recover.", ex.what());
+		const auto eptr = std::make_exception_ptr(ex::runtime_error(msg));
+		for (auto& ep : _sw_ep_list)
+			ep->notify_error(eptr);
 	}
 
 	void decoder_loop() {
@@ -926,6 +1247,7 @@ private:
 
 	std::function<std::size_t()> _max_size_getter;
 	std::function<bool()> _is_decoded_getter;
+	std::shared_ptr<rawudp::stats> _stats_ep;
 
 	boost::asio::io_context _io_context;
 	const boost::asio::ip::udp::endpoint _endpoint;
@@ -943,31 +1265,11 @@ private:
 	bool _clear_buffer;
 	bool _send_stop;
 
+	rawudp_reassembly_state _reassembly;
+
 	std::filebuf _dump_file;
 
 	std::list<std::shared_ptr<sw_endpoint>> _sw_ep_list;
-
-	struct footer_data {
-		struct s {
-			// 1st word
-			static inline constexpr std::size_t buffer_id{16};
-			static inline constexpr std::size_t tbd_1{1};
-			static inline constexpr std::size_t hash{32};
-			static inline constexpr std::size_t datagram_id{24}; // not part of the datagram!
-			static inline constexpr std::size_t aligned{1};
-			static inline constexpr std::size_t n_words{13};
-			static inline constexpr std::size_t last{1};
-		};
-		caen::uint_t<s::buffer_id>::fast _buffer_id;
-		// - tbd_1 not saved into struct
-		caen::uint_t<s::hash>::fast _hash;
-		caen::uint_t<s::datagram_id>::fast _datagram_id;
-		caen::uint_t<s::aligned>::fast _aligned;
-		caen::uint_t<s::n_words>::fast _n_words;
-		caen::uint_t<s::last>::fast _last;
-	};
-
-	std::optional<footer_data> _last_valid_footer;
 
 	static inline constexpr std::size_t datagram_footer_size{8};
 	static inline constexpr std::size_t max_datagram_size{65507}; // even if we should limit to 65504, aligned to a 64-bit word
@@ -982,9 +1284,118 @@ private:
 	args_list_t _args_list;
 };
 
+rawudp::stats::stats(client& client, handle::internal_handle_t endpoint_handle)
+	: endpoint(client, endpoint_handle)
+	, _pimpl{std::make_unique<endpoint_impl>()} {
+}
+
+rawudp::stats::~stats() = default;
+
+rawudp::stats::args_list_t rawudp::stats::default_data_format() {
+	using vt = data_format_utils<rawudp::stats>::args_type;
+	return {{
+			vt{names::RECEIVED_DATAGRAMS,			types::U64,	0	},
+			vt{names::DISCARDED_DATAGRAMS,			types::U64,	0	},
+			vt{names::RECEIVED_BYTES,				types::U64,	0	},
+			vt{names::EMITTED_BYTES,				types::U64,	0	},
+			vt{names::COMPLETED_BUFFERS,			types::U64,	0	},
+			vt{names::FLUSHED_BUFFERS,				types::U64,	0	},
+			vt{names::INCOMPLETE_BUFFERS,			types::U64,	0	},
+			vt{names::ESTIMATED_LOST_BUFFERS,		types::U64,	0	},
+			vt{names::RECOVERED_BYTES,				types::U64,	0	},
+			vt{names::DISCARDED_BYTES,				types::U64,	0	},
+	}};
+}
+
+std::size_t rawudp::stats::data_format_dimension(names name) {
+	switch (name) {
+	case names::RECEIVED_DATAGRAMS:
+	case names::DISCARDED_DATAGRAMS:
+	case names::RECEIVED_BYTES:
+	case names::EMITTED_BYTES:
+	case names::COMPLETED_BUFFERS:
+	case names::FLUSHED_BUFFERS:
+	case names::INCOMPLETE_BUFFERS:
+	case names::ESTIMATED_LOST_BUFFERS:
+	case names::RECOVERED_BYTES:
+	case names::DISCARDED_BYTES:
+		return 0;
+	default:
+		throw "unsupported name"_ex;
+	}
+}
+
+void rawudp::stats::set_data_format(const std::string& json_format) {
+	_pimpl->set_data_format(json_format);
+}
+
+void rawudp::stats::read_data(timeout_t timeout, std::va_list* args) {
+	boost::ignore_unused(timeout);
+	const auto data = _pimpl->get_snapshot();
+	for (const auto& arg : _pimpl->_args_list) {
+		const auto name = std::get<0>(arg);
+		const auto type = std::get<1>(arg);
+		switch (name) {
+		case names::RECEIVED_DATAGRAMS:
+			utility::put_argument(args, type, data._received_datagrams);
+			break;
+		case names::DISCARDED_DATAGRAMS:
+			utility::put_argument(args, type, data._discarded_datagrams);
+			break;
+		case names::RECEIVED_BYTES:
+			utility::put_argument(args, type, data._received_bytes);
+			break;
+		case names::EMITTED_BYTES:
+			utility::put_argument(args, type, data._emitted_bytes);
+			break;
+		case names::COMPLETED_BUFFERS:
+			utility::put_argument(args, type, data._completed_buffers);
+			break;
+		case names::FLUSHED_BUFFERS:
+			utility::put_argument(args, type, data._flushed_buffers);
+			break;
+		case names::INCOMPLETE_BUFFERS:
+			utility::put_argument(args, type, data._incomplete_buffers);
+			break;
+		case names::ESTIMATED_LOST_BUFFERS:
+			utility::put_argument(args, type, data._estimated_lost_buffers);
+			break;
+		case names::RECOVERED_BYTES:
+			utility::put_argument(args, type, data._recovered_bytes);
+			break;
+		case names::DISCARDED_BYTES:
+			utility::put_argument(args, type, data._discarded_bytes);
+			break;
+		default:
+			throw "unsupported data type"_ex;
+		}
+	}
+}
+
+void rawudp::stats::has_data(timeout_t timeout) {
+	boost::ignore_unused(timeout);
+}
+
+void rawudp::stats::clear_data() {
+	_pimpl->clear_data();
+}
+
+void rawudp::stats::add_counters(const counters& counters) {
+	_pimpl->add_counters(counters);
+}
+
 rawudp::rawudp(client& client, handle::internal_handle_t endpoint_handle) try
 	: hw_endpoint(client, endpoint_handle)
-	, _pimpl{std::make_unique<endpoint_impl>(get_client(), get_endpoint_server_handle())} {
+	, _stats_ep{}
+	, _pimpl{} {
+	if (const auto stats_handle = find_stats_endpoint_handle(client, endpoint_handle); stats_handle.has_value()) {
+		_stats_ep = std::make_shared<stats>(client, *stats_handle);
+		get_client().register_endpoint(_stats_ep);
+	} else {
+		spdlog::warn("rawudp stats endpoint is unavailable; UDP statistics are disabled");
+	}
+
+	_pimpl = std::make_unique<endpoint_impl>(get_client(), get_endpoint_server_handle(), _stats_ep);
 }
 catch (const std::exception& ex) {
 	spdlog::error("{} failed: {}", __func__, ex.what());

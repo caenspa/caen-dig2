@@ -11,6 +11,24 @@
 -----------------------------------------------------------------------------
 
 
+v1.9.0 (27/08/2026)
+-------------------
+
+New features:
+- Add support for a faster protocol to communicate with the digitizer. Used
+    only if the digitizer supports it.
+- Improved performance and reliability of UDP readout. The library can now
+    recover aligned data prefixes in case of missing datagrams and exposes
+    conservative loss statistics.
+- Add support for CAEN_FELib_SetValues and CAEN_FELib_GetValues to batch
+    multiple parameter accesses in a single round-trip.
+- Support for pha_cfd_filter and pha_cfd_filter_armed probe types on DPP-PHA.
+
+Fixes:
+- Gracefully handle receiver and decoder thread failures without process crash,
+    propagating the error to readers with recovery guidance.
+
+
 v1.8.3 (24/04/2026)
 -------------------
 
